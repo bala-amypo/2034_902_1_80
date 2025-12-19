@@ -1,0 +1,1784 @@
+Config
+1.JwtAuthenticationFilter.java
+
+package com.example.demo.config;
+
+import com.example.demo.security.JwtUtil;
+import io.jsonwebtoken.JwtException;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import java.io.IOException;
+import java.util.Collections;
+
+@Component
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private final JwtUtil jwtUtil;
+
+    public JwtAuthenticationFilter(JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            try {
+                String email = jwtUtil.extractEmail(token);
+                String role = jwtUtil.extractRole(token);
+                
+                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                        email, null, Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role))
+                );
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            } catch (JwtException e) {
+                // Invalid token, continue without authentication
+            }
+        }
+        filterChain.doFilter(request, response);
+    }
+}
+
+2.OpenApiConfig.java
+
+package com.example.demo.config;
+
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
+import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class OpenApiConfig {
+
+    @Bean
+    public OpenAPI customOpenAPI() {
+        return new OpenAPI()
+                .info(new Info()
+                        .title("Multi-Branch Academic Calendar Harmonizer")
+                        .description("API for managing academic calendars across multiple branches")
+                        .version("1.0.0"))
+                .addSecurityItem(new SecurityRequirement().addList("Bearer Authentication"))
+                .components(new io.swagger.v3.oas.models.Components()
+                        .addSecuritySchemes("Bearer Authentication",
+                                new SecurityScheme()
+                                        .type(SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")));
+    }
+}
+
+3.SecurityConfig.java
+package com.example.demo.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/auth/**", "/swagger-ui/**", "/v3/api-docs/**", "/simple-status").permitAll()
+                .requestMatchers("/api/**").authenticated()
+                .anyRequest().authenticated()
+            )
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+}
+
+Controller
+AcademicEventController.java
+package com.example.demo.controller;
+
+import com.example.demo.entity.AcademicEvent;
+import com.example.demo.service.AcademicEventService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/events")
+@Tag(name = "Academic Events")
+public class AcademicEventController {
+
+    private final AcademicEventService academicEventService;
+
+    public AcademicEventController(AcademicEventService academicEventService) {
+        this.academicEventService = academicEventService;
+    }
+
+    @PostMapping
+    @Operation(summary = "Create academic event")
+    public ResponseEntity<AcademicEvent> createEvent(@RequestBody AcademicEvent event) {
+        return ResponseEntity.ok(academicEventService.createEvent(event));
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Update academic event")
+    public ResponseEntity<AcademicEvent> updateEvent(@PathVariable Long id, @RequestBody AcademicEvent event) {
+        return ResponseEntity.ok(academicEventService.updateEvent(id, event));
+    }
+
+    @GetMapping("/branch/{branchId}")
+    @Operation(summary = "Get events by branch")
+    public ResponseEntity<List<AcademicEvent>> getEventsByBranch(@PathVariable Long branchId) {
+        return ResponseEntity.ok(academicEventService.getEventsByBranch(branchId));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Get event by ID")
+    public ResponseEntity<AcademicEvent> getEventById(@PathVariable Long id) {
+        return ResponseEntity.ok(academicEventService.getEventById(id));
+    }
+
+    @GetMapping
+    @Operation(summary = "Get all events")
+    public ResponseEntity<List<AcademicEvent>> getAllEvents() {
+        return ResponseEntity.ok(academicEventService.getAllEvents());
+    }
+}
+
+
+AuthController.java
+
+package com.example.demo.controller;
+
+import com.example.demo.dto.ApiResponse;
+import com.example.demo.dto.LoginRequest;
+import com.example.demo.dto.RegisterRequest;
+import com.example.demo.entity.UserAccount;
+import com.example.demo.security.JwtUtil;
+import com.example.demo.service.UserAccountService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/auth")
+@Tag(name = "Authentication")
+public class AuthController {
+
+    private final UserAccountService userAccountService;
+    private final JwtUtil jwtUtil;
+    private final PasswordEncoder passwordEncoder;
+
+    public AuthController(UserAccountService userAccountService, JwtUtil jwtUtil, PasswordEncoder passwordEncoder) {
+        this.userAccountService = userAccountService;
+        this.jwtUtil = jwtUtil;
+        this.passwordEncoder = passwordEncoder;
+    }
+
+    @PostMapping("/register")
+    @Operation(summary = "Register a new user")
+    public ResponseEntity<ApiResponse> register(@RequestBody RegisterRequest request) {
+        UserAccount user = new UserAccount();
+        user.setFullName(request.getName());
+        user.setEmail(request.getEmail());
+        user.setPassword(request.getPassword());
+        user.setRole(request.getRole());
+        user.setDepartment(request.getDepartment());
+        
+        UserAccount created = userAccountService.register(user);
+        return ResponseEntity.ok(new ApiResponse(true, "User registered successfully", created));
+    }
+
+    @PostMapping("/login")
+    @Operation(summary = "Login user")
+    public ResponseEntity<ApiResponse> login(@RequestBody LoginRequest request) {
+        UserAccount user = userAccountService.findByEmail(request.getEmail());
+        
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            return ResponseEntity.badRequest().body(new ApiResponse(false, "Invalid credentials", null));
+        }
+        
+        String token = jwtUtil.generateToken(user.getId(), user.getEmail(), user.getRole());
+        Map<String, Object> data = new HashMap<>();
+        data.put("token", token);
+        data.put("user", user);
+        
+        return ResponseEntity.ok(new ApiResponse(true, "Login successful", data));
+    }
+
+    @GetMapping("/users")
+    @Operation(summary = "Get all users")
+    public ResponseEntity<List<UserAccount>> getAllUsers() {
+        return ResponseEntity.ok(userAccountService.getAllUsers());
+    }
+
+    @GetMapping("/users/{id}")
+    @Operation(summary = "Get user by ID")
+    public ResponseEntity<UserAccount> getUser(@PathVariable Long id) {
+        return ResponseEntity.ok(userAccountService.getUser(id));
+    }
+}
+
+
+BranchProfileController.java
+package com.example.demo.controller;
+
+import com.example.demo.entity.BranchProfile;
+import com.example.demo.service.BranchProfileService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/branches")
+@Tag(name = "Branch Profiles")
+public class BranchProfileController {
+
+    private final BranchProfileService branchProfileService;
+
+    public BranchProfileController(BranchProfileService branchProfileService) {
+        this.branchProfileService = branchProfileService;
+    }
+
+    @PostMapping
+    @Operation(summary = "Create branch profile")
+    public ResponseEntity<BranchProfile> createBranch(@RequestBody BranchProfile branch) {
+        return ResponseEntity.ok(branchProfileService.createBranch(branch));
+    }
+
+    @PutMapping("/{id}/status")
+    @Operation(summary = "Update branch status")
+    public ResponseEntity<BranchProfile> updateBranchStatus(@PathVariable Long id, @RequestParam boolean active) {
+        return ResponseEntity.ok(branchProfileService.updateBranchStatus(id, active));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Get branch by ID")
+    public ResponseEntity<BranchProfile> getBranchById(@PathVariable Long id) {
+        return ResponseEntity.ok(branchProfileService.getBranchById(id));
+    }
+
+    @GetMapping
+    @Operation(summary = "Get all branches")
+    public ResponseEntity<List<BranchProfile>> getAllBranches() {
+        return ResponseEntity.ok(branchProfileService.getAllBranches());
+    }
+
+    @GetMapping("/lookup/{branchCode}")
+    @Operation(summary = "Find branch by code")
+    public ResponseEntity<BranchProfile> findByBranchCode(@PathVariable String branchCode) {
+        return ResponseEntity.ok(branchProfileService.findByBranchCode(branchCode));
+    }
+}
+
+ClashRecordController.java
+package com.example.demo.controller;
+
+import com.example.demo.entity.ClashRecord;
+import com.example.demo.service.ClashDetectionService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/clashes")
+@Tag(name = "Clash Records")
+public class ClashRecordController {
+
+    private final ClashDetectionService clashDetectionService;
+
+    public ClashRecordController(ClashDetectionService clashDetectionService) {
+        this.clashDetectionService = clashDetectionService;
+    }
+
+    @PostMapping
+    @Operation(summary = "Log clash record")
+    public ResponseEntity<ClashRecord> logClash(@RequestBody ClashRecord clash) {
+        return ResponseEntity.ok(clashDetectionService.logClash(clash));
+    }
+
+    @PutMapping("/{id}/resolve")
+    @Operation(summary = "Resolve clash")
+    public ResponseEntity<ClashRecord> resolveClash(@PathVariable Long id) {
+        return ResponseEntity.ok(clashDetectionService.resolveClash(id));
+    }
+
+    @GetMapping("/event/{eventId}")
+    @Operation(summary = "Get clashes for event")
+    public ResponseEntity<List<ClashRecord>> getClashesForEvent(@PathVariable Long eventId) {
+        return ResponseEntity.ok(clashDetectionService.getClashesForEvent(eventId));
+    }
+
+    @GetMapping("/unresolved")
+    @Operation(summary = "Get unresolved clashes")
+    public ResponseEntity<List<ClashRecord>> getUnresolvedClashes() {
+        return ResponseEntity.ok(clashDetectionService.getUnresolvedClashes());
+    }
+
+    @GetMapping
+    @Operation(summary = "Get all clashes")
+    public ResponseEntity<List<ClashRecord>> getAllClashes() {
+        return ResponseEntity.ok(clashDetectionService.getAllClashes());
+    }
+}
+
+
+EventMergeCotroller.java
+
+package com.example.demo.controller;
+
+import com.example.demo.entity.EventMergeRecord;
+import com.example.demo.service.EventMergeService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/merge-records")
+@Tag(name = "Event Merge Records")
+public class EventMergeController {
+
+    private final EventMergeService eventMergeService;
+
+    public EventMergeController(EventMergeService eventMergeService) {
+        this.eventMergeService = eventMergeService;
+    }
+
+    @PostMapping
+    @Operation(summary = "Merge events")
+    public ResponseEntity<EventMergeRecord> mergeEvents(@RequestBody Map<String, Object> request) {
+        @SuppressWarnings("unchecked")
+        List<Long> eventIds = (List<Long>) request.get("eventIds");
+        String reason = (String) request.get("reason");
+        return ResponseEntity.ok(eventMergeService.mergeEvents(eventIds, reason));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Get merge record by ID")
+    public ResponseEntity<EventMergeRecord> getMergeRecordById(@PathVariable Long id) {
+        return ResponseEntity.ok(eventMergeService.getMergeRecordById(id));
+    }
+
+    @GetMapping
+    @Operation(summary = "Get all merge records")
+    public ResponseEntity<List<EventMergeRecord>> getAllMergeRecords() {
+        return ResponseEntity.ok(eventMergeService.getAllMergeRecords());
+    }
+
+    @GetMapping("/range")
+    @Operation(summary = "Get merge records by date range")
+    public ResponseEntity<List<EventMergeRecord>> getMergeRecordsByDate(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+        return ResponseEntity.ok(eventMergeService.getMergeRecordsByDate(start, end));
+    }
+}
+
+
+HarmonizedCalendarController.java
+
+package com.example.demo.controller;
+
+import com.example.demo.entity.HarmonizedCalendar;
+import com.example.demo.service.HarmonizedCalendarService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/harmonized-calendars")
+@Tag(name = "Harmonized Calendars")
+public class HarmonizedCalendarController {
+
+    private final HarmonizedCalendarService harmonizedCalendarService;
+
+    public HarmonizedCalendarController(HarmonizedCalendarService harmonizedCalendarService) {
+        this.harmonizedCalendarService = harmonizedCalendarService;
+    }
+
+    @PostMapping("/generate")
+    @Operation(summary = "Generate harmonized calendar")
+    public ResponseEntity<HarmonizedCalendar> generateHarmonizedCalendar(@RequestBody Map<String, String> request) {
+        String title = request.get("title");
+        String generatedBy = request.get("generatedBy");
+        return ResponseEntity.ok(harmonizedCalendarService.generateHarmonizedCalendar(title, generatedBy));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Get calendar by ID")
+    public ResponseEntity<HarmonizedCalendar> getCalendarById(@PathVariable Long id) {
+        return ResponseEntity.ok(harmonizedCalendarService.getCalendarById(id));
+    }
+
+    @GetMapping
+    @Operation(summary = "Get all calendars")
+    public ResponseEntity<List<HarmonizedCalendar>> getAllCalendars() {
+        return ResponseEntity.ok(harmonizedCalendarService.getAllCalendars());
+    }
+
+    @GetMapping("/range")
+    @Operation(summary = "Get calendars within date range")
+    public ResponseEntity<List<HarmonizedCalendar>> getCalendarsWithinRange(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+        return ResponseEntity.ok(harmonizedCalendarService.getCalendarsWithinRange(start, end));
+    }
+}
+
+
+Dto
+
+ApiResponse.java
+
+package com.example.demo.dto;
+
+public class ApiResponse {
+    private boolean success;
+    private String message;
+    private Object data;
+
+    public ApiResponse() {}
+
+    public ApiResponse(boolean success, String message, Object data) {
+        this.success = success;
+        this.message = message;
+        this.data = data;
+    }
+
+    public boolean isSuccess() { return success; }
+    public void setSuccess(boolean success) { this.success = success; }
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
+    public Object getData() { return data; }
+    public void setData(Object data) { this.data = data; }
+}
+
+
+LoginRequest.java
+
+package com.example.demo.dto;
+
+public class ApiResponse {
+    private boolean success;
+    private String message;
+    private Object data;
+
+    public ApiResponse() {}
+
+    public ApiResponse(boolean success, String message, Object data) {
+        this.success = success;
+        this.message = message;
+        this.data = data;
+    }
+
+    public boolean isSuccess() { return success; }
+    public void setSuccess(boolean success) { this.success = success; }
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
+    public Object getData() { return data; }
+    public void setData(Object data) { this.data = data; }
+}
+
+entity
+
+
+
+
+RegisterRequest.java
+
+package com.example.demo.dto;
+
+public class RegisterRequest {
+    private String name;
+    private String email;
+    private String password;
+    private String role;
+    private String department;
+
+    public RegisterRequest() {}
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
+    public String getDepartment() { return department; }
+    public void setDepartment(String department) { this.department = department; }
+}
+
+
+Entity
+
+AcademicEvent.java
+
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "academic_events")
+public class AcademicEvent {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private Long branchId;
+
+    @Column(nullable = false)
+    private String title;
+
+    private String eventType;
+
+    @Column(nullable = false)
+    private LocalDate startDate;
+
+    @Column(nullable = false)
+    private LocalDate endDate;
+
+    private String location;
+
+    private String description;
+
+    @Column(nullable = false)
+    private LocalDateTime submittedAt;
+
+    public AcademicEvent() {}
+
+    public AcademicEvent(Long id, Long branchId, String title, String eventType, LocalDate startDate, LocalDate endDate, String location, String description, LocalDateTime submittedAt) {
+        this.id = id;
+        this.branchId = branchId;
+        this.title = title;
+        this.eventType = eventType;
+        this.startDate = startDate;
+        this.endDate = endDate;
+        this.location = location;
+        this.description = description;
+        this.submittedAt = submittedAt;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        submittedAt = LocalDateTime.now();
+    }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getEventType() { return eventType; }
+    public void setEventType(String eventType) { this.eventType = eventType; }
+    public LocalDate getStartDate() { return startDate; }
+    public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+    public LocalDate getEndDate() { return endDate; }
+    public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
+    public String getLocation() { return location; }
+    public void setLocation(String location) { this.location = location; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public LocalDateTime getSubmittedAt() { return submittedAt; }
+    public void setSubmittedAt(LocalDateTime submittedAt) { this.submittedAt = submittedAt; }
+}
+
+
+BranchProfile.java
+
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "branch_profiles")
+public class BranchProfile {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(unique = true, nullable = false)
+    private String branchCode;
+
+    @Column(nullable = false)
+    private String branchName;
+
+    private String contactEmail;
+
+    @Column(nullable = false)
+    private LocalDateTime lastSyncAt;
+
+    @Column(nullable = false)
+    private Boolean active = true;
+
+    public BranchProfile() {}
+
+    public BranchProfile(Long id, String branchCode, String branchName, String contactEmail, LocalDateTime lastSyncAt, Boolean active) {
+        this.id = id;
+        this.branchCode = branchCode;
+        this.branchName = branchName;
+        this.contactEmail = contactEmail;
+        this.lastSyncAt = lastSyncAt;
+        this.active = active;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        lastSyncAt = LocalDateTime.now();
+        if (active == null) active = true;
+    }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getBranchCode() { return branchCode; }
+    public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
+    public String getBranchName() { return branchName; }
+    public void setBranchName(String branchName) { this.branchName = branchName; }
+    public String getContactEmail() { return contactEmail; }
+    public void setContactEmail(String contactEmail) { this.contactEmail = contactEmail; }
+    public LocalDateTime getLastSyncAt() { return lastSyncAt; }
+    public void setLastSyncAt(LocalDateTime lastSyncAt) { this.lastSyncAt = lastSyncAt; }
+    public Boolean getActive() { return active; }
+    public void setActive(Boolean active) { this.active = active; }
+}
+
+
+ClashRecord.java
+
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "clash_records")
+public class ClashRecord {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private Long eventAId;
+
+    @Column(nullable = false)
+    private Long eventBId;
+
+    private String clashType;
+
+    private String severity;
+
+    private String details;
+
+    @Column(nullable = false)
+    private LocalDateTime detectedAt;
+
+    @Column(nullable = false)
+    private Boolean resolved = false;
+
+    public ClashRecord() {}
+
+    public ClashRecord(Long id, Long eventAId, Long eventBId, String clashType, String severity, String details, LocalDateTime detectedAt, Boolean resolved) {
+        this.id = id;
+        this.eventAId = eventAId;
+        this.eventBId = eventBId;
+        this.clashType = clashType;
+        this.severity = severity;
+        this.details = details;
+        this.detectedAt = detectedAt;
+        this.resolved = resolved;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        detectedAt = LocalDateTime.now();
+        if (resolved == null) resolved = false;
+    }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public Long getEventAId() { return eventAId; }
+    public void setEventAId(Long eventAId) { this.eventAId = eventAId; }
+    public Long getEventBId() { return eventBId; }
+    public void setEventBId(Long eventBId) { this.eventBId = eventBId; }
+    public String getClashType() { return clashType; }
+    public void setClashType(String clashType) { this.clashType = clashType; }
+    public String getSeverity() { return severity; }
+    public void setSeverity(String severity) { this.severity = severity; }
+    public String getDetails() { return details; }
+    public void setDetails(String details) { this.details = details; }
+    public LocalDateTime getDetectedAt() { return detectedAt; }
+    public void setDetectedAt(LocalDateTime detectedAt) { this.detectedAt = detectedAt; }
+    public Boolean getResolved() { return resolved; }
+    public void setResolved(Boolean resolved) { this.resolved = resolved; }
+}
+
+EventMergeRecord.java
+
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "event_merge_records")
+public class EventMergeRecord {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String sourceEventIds;
+
+    @Column(nullable = false)
+    private String mergedTitle;
+
+    @Column(nullable = false)
+    private LocalDate mergedStartDate;
+
+    @Column(nullable = false)
+    private LocalDate mergedEndDate;
+
+    private String mergeReason;
+
+    @Column(nullable = false)
+    private LocalDateTime createdAt;
+
+    public EventMergeRecord() {}
+
+    public EventMergeRecord(Long id, String sourceEventIds, String mergedTitle, LocalDate mergedStartDate, LocalDate mergedEndDate, String mergeReason, LocalDateTime createdAt) {
+        this.id = id;
+        this.sourceEventIds = sourceEventIds;
+        this.mergedTitle = mergedTitle;
+        this.mergedStartDate = mergedStartDate;
+        this.mergedEndDate = mergedEndDate;
+        this.mergeReason = mergeReason;
+        this.createdAt = createdAt;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getSourceEventIds() { return sourceEventIds; }
+    public void setSourceEventIds(String sourceEventIds) { this.sourceEventIds = sourceEventIds; }
+    public String getMergedTitle() { return mergedTitle; }
+    public void setMergedTitle(String mergedTitle) { this.mergedTitle = mergedTitle; }
+    public LocalDate getMergedStartDate() { return mergedStartDate; }
+    public void setMergedStartDate(LocalDate mergedStartDate) { this.mergedStartDate = mergedStartDate; }
+    public LocalDate getMergedEndDate() { return mergedEndDate; }
+    public void setMergedEndDate(LocalDate mergedEndDate) { this.mergedEndDate = mergedEndDate; }
+    public String getMergeReason() { return mergeReason; }
+    public void setMergeReason(String mergeReason) { this.mergeReason = mergeReason; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+}
+
+HarmonizedCalendar.java
+
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "harmonized_calendars")
+public class HarmonizedCalendar {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String title;
+
+    private String generatedBy;
+
+    @Column(nullable = false)
+    private LocalDateTime generatedAt;
+
+    @Column(nullable = false)
+    private LocalDate effectiveFrom;
+
+    @Column(nullable = false)
+    private LocalDate effectiveTo;
+
+    @Column(columnDefinition = "TEXT")
+    private String eventsJson;
+
+    public HarmonizedCalendar() {}
+
+    public HarmonizedCalendar(Long id, String title, String generatedBy, LocalDateTime generatedAt, LocalDate effectiveFrom, LocalDate effectiveTo, String eventsJson) {
+        this.id = id;
+        this.title = title;
+        this.generatedBy = generatedBy;
+        this.generatedAt = generatedAt;
+        this.effectiveFrom = effectiveFrom;
+        this.effectiveTo = effectiveTo;
+        this.eventsJson = eventsJson;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        generatedAt = LocalDateTime.now();
+    }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getGeneratedBy() { return generatedBy; }
+    public void setGeneratedBy(String generatedBy) { this.generatedBy = generatedBy; }
+    public LocalDateTime getGeneratedAt() { return generatedAt; }
+    public void setGeneratedAt(LocalDateTime generatedAt) { this.generatedAt = generatedAt; }
+    public LocalDate getEffectiveFrom() { return effectiveFrom; }
+    public void setEffectiveFrom(LocalDate effectiveFrom) { this.effectiveFrom = effectiveFrom; }
+    public LocalDate getEffectiveTo() { return effectiveTo; }
+    public void setEffectiveTo(LocalDate effectiveTo) { this.effectiveTo = effectiveTo; }
+    public String getEventsJson() { return eventsJson; }
+    public void setEventsJson(String eventsJson) { this.eventsJson = eventsJson; }
+}
+
+
+UserAccount.java
+
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "user_accounts")
+public class UserAccount {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String fullName;
+
+    @Column(unique = true, nullable = false)
+    private String email;
+
+    @Column(nullable = false)
+    private String password;
+
+    @Column(nullable = false)
+    private String role = "REVIEWER";
+
+    private String department;
+
+    @Column(nullable = false)
+    private LocalDateTime createdAt;
+
+    public UserAccount() {}
+
+    public UserAccount(Long id, String fullName, String email, String password, String role, String department, LocalDateTime createdAt) {
+        this.id = id;
+        this.fullName = fullName;
+        this.email = email;
+        this.password = password;
+        this.role = role;
+        this.department = department;
+        this.createdAt = createdAt;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getFullName() { return fullName; }
+    public void setFullName(String fullName) { this.fullName = fullName; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
+    public String getDepartment() { return department; }
+    public void setDepartment(String department) { this.department = department; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+}
+
+
+Exceptions
+
+GlobalExceptionHandler.java
+
+package com.example.demo.exception;
+
+import com.example.demo.dto.ApiResponse;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ValidationException.class)
+    public ResponseEntity<ApiResponse> handleValidationException(ValidationException ex) {
+        return ResponseEntity.badRequest()
+                .body(new ApiResponse(false, ex.getMessage(), null));
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiResponse> handleResourceNotFoundException(ResourceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ApiResponse(false, ex.getMessage(), null));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse> handleGenericException(Exception ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ApiResponse(false, "Internal server error", null));
+    }
+}
+
+
+ResourceNotFoundException.java
+
+package com.example.demo.exception;
+
+public class ResourceNotFoundException extends RuntimeException {
+    public ResourceNotFoundException(String message) {
+        super(message);
+    }
+}
+
+
+ValidationException.java
+
+package com.example.demo.exception;
+
+public class ValidationException extends RuntimeException {
+    public ValidationException(String message) {
+        super(message);
+    }
+}
+
+
+
+
+
+
+Repository
+
+AcademicEventRepository.java
+
+
+package com.example.demo.repository;
+
+import com.example.demo.entity.AcademicEvent;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import java.time.LocalDate;
+import java.util.List;
+
+@Repository
+public interface AcademicEventRepository extends JpaRepository<AcademicEvent, Long> {
+    List<AcademicEvent> findByBranchId(Long branchId);
+    List<AcademicEvent> findByEventType(String eventType);
+    List<AcademicEvent> findByStartDateBetween(LocalDate start, LocalDate end);
+}
+
+
+BranchProfileRepository.java
+
+
+package com.example.demo.repository;
+
+import com.example.demo.entity.BranchProfile;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import java.util.Optional;
+
+@Repository
+public interface BranchProfileRepository extends JpaRepository<BranchProfile, Long> {
+    Optional<BranchProfile> findByBranchCode(String branchCode);
+}
+
+
+
+ClashRecordRepository.java
+
+package com.example.demo.repository;
+
+import com.example.demo.entity.ClashRecord;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import java.util.List;
+
+@Repository
+public interface ClashRecordRepository extends JpaRepository<ClashRecord, Long> {
+    List<ClashRecord> findByEventAIdOrEventBId(Long eventAId, Long eventBId);
+    List<ClashRecord> findByResolvedFalse();
+}
+
+
+
+EventMergeRecordRepository.java
+
+package com.example.demo.repository;
+
+import com.example.demo.entity.EventMergeRecord;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import java.time.LocalDate;
+import java.util.List;
+
+@Repository
+public interface EventMergeRecordRepository extends JpaRepository<EventMergeRecord, Long> {
+    List<EventMergeRecord> findByMergedStartDateBetween(LocalDate start, LocalDate end);
+}
+
+
+HarmonizedCalendarRepository.java
+
+
+
+
+
+package com.example.demo.repository;
+
+import com.example.demo.entity.HarmonizedCalendar;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import java.time.LocalDate;
+import java.util.List;
+
+@Repository
+public interface HarmonizedCalendarRepository extends JpaRepository<HarmonizedCalendar, Long> {
+    List<HarmonizedCalendar> findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(LocalDate date1, LocalDate date2);
+}
+
+
+
+UserAccountRepository.java
+
+
+package com.example.demo.repository;
+
+import com.example.demo.entity.UserAccount;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import java.util.Optional;
+
+@Repository
+public interface UserAccountRepository extends JpaRepository<UserAccount, Long> {
+    Optional<UserAccount> findByEmail(String email);
+    boolean existsByEmail(String email);
+}
+
+
+Security 
+
+CustomUserDetailsService.java
+
+
+package com.example.demo.security;
+
+import com.example.demo.entity.UserAccount;
+import com.example.demo.repository.UserAccountRepository;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+import java.util.Collections;
+
+@Service
+public class CustomUserDetailsService implements UserDetailsService {
+
+    private final UserAccountRepository userAccountRepository;
+
+    public CustomUserDetailsService(UserAccountRepository userAccountRepository) {
+        this.userAccountRepository = userAccountRepository;
+    }
+
+    @Override
+    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
+        UserAccount user = userAccountRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        return new User(
+                user.getEmail(),
+                user.getPassword(),
+                Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + user.getRole()))
+        );
+    }
+}
+
+JwtUtil.java
+
+
+package com.example.demo.security;
+
+import io.jsonwebtoken.*;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import javax.crypto.SecretKey;
+import java.util.Date;
+
+@Component
+public class JwtUtil {
+
+    private final String secretKey;
+    private final long expirationMillis;
+    private SecretKey key;
+
+    public JwtUtil(@Value("${jwt.secret}") String secretKey, @Value("${jwt.expiration}") long expirationMillis) {
+        this.secretKey = secretKey;
+        this.expirationMillis = expirationMillis;
+        initKey();
+    }
+
+    public void initKey() {
+        this.key = Keys.hmacShaKeyFor(secretKey.getBytes());
+    }
+
+    public String generateToken(Long userId, String email, String role) {
+        return Jwts.builder()
+                .claim("userId", userId)
+                .claim("email", email)
+                .claim("role", role)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + expirationMillis))
+                .signWith(key)
+                .compact();
+    }
+
+    public Claims validateToken(String token) throws JwtException, ExpiredJwtException {
+        return Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
+    }
+
+    public String extractEmail(String token) {
+        return validateToken(token).get("email", String.class);
+    }
+
+    public Long extractUserId(String token) {
+        return validateToken(token).get("userId", Long.class);
+    }
+
+    public String extractRole(String token) {
+        return validateToken(token).get("role", String.class);
+    }
+}
+
+
+Service 
+impl 
+
+AcademicEventServiceImpl.java
+
+package com.example.demo.service.impl;
+
+import com.example.demo.entity.AcademicEvent;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.exception.ValidationException;
+import com.example.demo.repository.AcademicEventRepository;
+import com.example.demo.service.AcademicEventService;
+import org.springframework.stereotype.Service;
+import java.util.List;
+
+@Service
+public class AcademicEventServiceImpl implements AcademicEventService {
+
+    private final AcademicEventRepository academicEventRepository;
+
+    public AcademicEventServiceImpl(AcademicEventRepository academicEventRepository) {
+        this.academicEventRepository = academicEventRepository;
+    }
+
+    @Override
+    public AcademicEvent createEvent(AcademicEvent event) {
+        if (event.getStartDate().isAfter(event.getEndDate())) {
+            throw new ValidationException("startDate cannot be after endDate");
+        }
+        return academicEventRepository.save(event);
+    }
+
+    @Override
+    public List<AcademicEvent> getEventsByBranch(Long branchId) {
+        return academicEventRepository.findByBranchId(branchId);
+    }
+
+    @Override
+    public AcademicEvent updateEvent(Long id, AcademicEvent event) {
+        AcademicEvent existingEvent = academicEventRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Event not found"));
+        
+        if (event.getStartDate().isAfter(event.getEndDate())) {
+            throw new ValidationException("startDate cannot be after endDate");
+        }
+        
+        existingEvent.setTitle(event.getTitle());
+        existingEvent.setEventType(event.getEventType());
+        existingEvent.setStartDate(event.getStartDate());
+        existingEvent.setEndDate(event.getEndDate());
+        existingEvent.setLocation(event.getLocation());
+        existingEvent.setDescription(event.getDescription());
+        
+        return academicEventRepository.save(existingEvent);
+    }
+
+    @Override
+    public AcademicEvent getEventById(Long id) {
+        return academicEventRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Event not found"));
+    }
+
+    @Override
+    public List<AcademicEvent> getAllEvents() {
+        return academicEventRepository.findAll();
+    }
+}
+
+
+
+
+
+
+
+
+BranchProfileServiceImpl.java
+
+package com.example.demo.service.impl;
+
+import com.example.demo.entity.BranchProfile;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.repository.BranchProfileRepository;
+import com.example.demo.service.BranchProfileService;
+import org.springframework.stereotype.Service;
+import java.util.List;
+
+@Service
+public class BranchProfileServiceImpl implements BranchProfileService {
+
+    private final BranchProfileRepository branchProfileRepository;
+
+    public BranchProfileServiceImpl(BranchProfileRepository branchProfileRepository) {
+        this.branchProfileRepository = branchProfileRepository;
+    }
+
+    @Override
+    public BranchProfile createBranch(BranchProfile branch) {
+        return branchProfileRepository.save(branch);
+    }
+
+    @Override
+    public BranchProfile updateBranchStatus(Long id, boolean active) {
+        BranchProfile branch = branchProfileRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
+        branch.setActive(active);
+        return branchProfileRepository.save(branch);
+    }
+
+    @Override
+    public List<BranchProfile> getAllBranches() {
+        return branchProfileRepository.findAll();
+    }
+
+    @Override
+    public BranchProfile getBranchById(Long id) {
+        return branchProfileRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
+    }
+
+    @Override
+    public BranchProfile findByBranchCode(String branchCode) {
+        return branchProfileRepository.findByBranchCode(branchCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
+    }
+}
+
+
+ClashDetectionServiceImpl.java
+
+
+package com.example.demo.service.impl;
+
+import com.example.demo.entity.ClashRecord;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.repository.ClashRecordRepository;
+import com.example.demo.service.ClashDetectionService;
+import org.springframework.stereotype.Service;
+import java.util.List;
+
+@Service
+public class ClashDetectionServiceImpl implements ClashDetectionService {
+
+    private final ClashRecordRepository clashRecordRepository;
+
+    public ClashDetectionServiceImpl(ClashRecordRepository clashRecordRepository) {
+        this.clashRecordRepository = clashRecordRepository;
+    }
+
+    @Override
+    public ClashRecord logClash(ClashRecord clash) {
+        return clashRecordRepository.save(clash);
+    }
+
+    @Override
+    public List<ClashRecord> getClashesForEvent(Long eventId) {
+        return clashRecordRepository.findByEventAIdOrEventBId(eventId, eventId);
+    }
+
+    @Override
+    public ClashRecord resolveClash(Long clashId) {
+        ClashRecord clash = clashRecordRepository.findById(clashId)
+                .orElseThrow(() -> new ResourceNotFoundException("Clash not found"));
+        clash.setResolved(true);
+        return clashRecordRepository.save(clash);
+    }
+
+    @Override
+    public List<ClashRecord> getUnresolvedClashes() {
+        return clashRecordRepository.findByResolvedFalse();
+    }
+
+    @Override
+    public List<ClashRecord> getAllClashes() {
+        return clashRecordRepository.findAll();
+    }
+}
+
+
+EventMergeServiceImpl.java
+
+package com.example.demo.service.impl;
+
+import com.example.demo.entity.AcademicEvent;
+import com.example.demo.entity.EventMergeRecord;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.repository.AcademicEventRepository;
+import com.example.demo.repository.EventMergeRecordRepository;
+import com.example.demo.service.EventMergeService;
+import org.springframework.stereotype.Service;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+public class EventMergeServiceImpl implements EventMergeService {
+
+    private final EventMergeRecordRepository eventMergeRecordRepository;
+    private final AcademicEventRepository academicEventRepository;
+
+    public EventMergeServiceImpl(EventMergeRecordRepository eventMergeRecordRepository, AcademicEventRepository academicEventRepository) {
+        this.eventMergeRecordRepository = eventMergeRecordRepository;
+        this.academicEventRepository = academicEventRepository;
+    }
+
+    @Override
+    public EventMergeRecord mergeEvents(List<Long> eventIds, String reason) {
+        List<AcademicEvent> events = academicEventRepository.findAllById(eventIds);
+        if (events.size() != eventIds.size()) {
+            throw new ResourceNotFoundException("One or more events not found");
+        }
+
+        String sourceEventIds = eventIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        String mergedTitle = events.stream().map(AcademicEvent::getTitle).collect(Collectors.joining(" + "));
+        LocalDate mergedStartDate = events.stream().map(AcademicEvent::getStartDate).min(LocalDate::compareTo).orElse(LocalDate.now());
+        LocalDate mergedEndDate = events.stream().map(AcademicEvent::getEndDate).max(LocalDate::compareTo).orElse(LocalDate.now());
+
+        EventMergeRecord mergeRecord = new EventMergeRecord();
+        mergeRecord.setSourceEventIds(sourceEventIds);
+        mergeRecord.setMergedTitle(mergedTitle);
+        mergeRecord.setMergedStartDate(mergedStartDate);
+        mergeRecord.setMergedEndDate(mergedEndDate);
+        mergeRecord.setMergeReason(reason);
+
+        return eventMergeRecordRepository.save(mergeRecord);
+    }
+
+    @Override
+    public List<EventMergeRecord> getAllMergeRecords() {
+        return eventMergeRecordRepository.findAll();
+    }
+
+    @Override
+    public EventMergeRecord getMergeRecordById(Long id) {
+        return eventMergeRecordRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Merge record not found"));
+    }
+
+    @Override
+    public List<EventMergeRecord> getMergeRecordsByDate(LocalDate start, LocalDate end) {
+        return eventMergeRecordRepository.findByMergedStartDateBetween(start, end);
+    }
+}
+
+
+HarmonizedCalendarServiceImpl.java
+
+package com.example.demo.service.impl;
+
+import com.example.demo.entity.HarmonizedCalendar;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.repository.HarmonizedCalendarRepository;
+import com.example.demo.service.HarmonizedCalendarService;
+import org.springframework.stereotype.Service;
+import java.time.LocalDate;
+import java.util.List;
+
+@Service
+public class HarmonizedCalendarServiceImpl implements HarmonizedCalendarService {
+
+    private final HarmonizedCalendarRepository harmonizedCalendarRepository;
+
+    public HarmonizedCalendarServiceImpl(HarmonizedCalendarRepository harmonizedCalendarRepository) {
+        this.harmonizedCalendarRepository = harmonizedCalendarRepository;
+    }
+
+    @Override
+    public HarmonizedCalendar generateHarmonizedCalendar(String title, String generatedBy) {
+        HarmonizedCalendar calendar = new HarmonizedCalendar();
+        calendar.setTitle(title);
+        calendar.setGeneratedBy(generatedBy);
+        calendar.setEffectiveFrom(LocalDate.now());
+        calendar.setEffectiveTo(LocalDate.now().plusYears(1));
+        calendar.setEventsJson("[]");
+        return harmonizedCalendarRepository.save(calendar);
+    }
+
+    @Override
+    public HarmonizedCalendar getCalendarById(Long id) {
+        return harmonizedCalendarRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Calendar not found"));
+    }
+
+    @Override
+    public List<HarmonizedCalendar> getAllCalendars() {
+        return harmonizedCalendarRepository.findAll();
+    }
+
+    @Override
+    public List<HarmonizedCalendar> getCalendarsWithinRange(LocalDate start, LocalDate end) {
+        return harmonizedCalendarRepository.findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(start, end);
+    }
+}
+
+
+UserAccountServiceImpl.java
+
+
+package com.example.demo.service.impl;
+
+import com.example.demo.entity.UserAccount;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.exception.ValidationException;
+import com.example.demo.repository.UserAccountRepository;
+import com.example.demo.service.UserAccountService;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import java.util.List;
+
+@Service
+public class UserAccountServiceImpl implements UserAccountService {
+
+    private final UserAccountRepository userAccountRepository;
+    private final PasswordEncoder passwordEncoder;
+
+    public UserAccountServiceImpl(UserAccountRepository userAccountRepository, PasswordEncoder passwordEncoder) {
+        this.userAccountRepository = userAccountRepository;
+        this.passwordEncoder = passwordEncoder;
+    }
+
+    @Override
+    public UserAccount register(UserAccount user) {
+        if (userAccountRepository.existsByEmail(user.getEmail())) {
+            throw new ValidationException("Email already in use");
+        }
+        if (user.getRole() == null) {
+            user.setRole("REVIEWER");
+        }
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        return userAccountRepository.save(user);
+    }
+
+    @Override
+    public UserAccount findByEmail(String email) {
+        return userAccountRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    }
+
+    @Override
+    public UserAccount getUser(Long id) {
+        return userAccountRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    }
+
+    @Override
+    public List<UserAccount> getAllUsers() {
+        return userAccountRepository.findAll();
+    }
+}
+
+Service
+
+AcademicEventService.java
+
+package com.example.demo.service;
+
+import com.example.demo.entity.AcademicEvent;
+import java.util.List;
+
+public interface AcademicEventService {
+    AcademicEvent createEvent(AcademicEvent event);
+    List<AcademicEvent> getEventsByBranch(Long branchId);
+    AcademicEvent updateEvent(Long id, AcademicEvent event);
+    AcademicEvent getEventById(Long id);
+    List<AcademicEvent> getAllEvents();
+}
+
+BranchProfileService.java
+
+package com.example.demo.service;
+
+import com.example.demo.entity.BranchProfile;
+import java.util.List;
+
+public interface BranchProfileService {
+    BranchProfile createBranch(BranchProfile branch);
+    BranchProfile updateBranchStatus(Long id, boolean active);
+    List<BranchProfile> getAllBranches();
+    BranchProfile getBranchById(Long id);
+    BranchProfile findByBranchCode(String branchCode);
+}
+
+
+ClashDetectionService.java
+
+package com.example.demo.service;
+
+import com.example.demo.entity.ClashRecord;
+import java.util.List;
+
+public interface ClashDetectionService {
+    ClashRecord logClash(ClashRecord clash);
+    List<ClashRecord> getClashesForEvent(Long eventId);
+    ClashRecord resolveClash(Long clashId);
+    List<ClashRecord> getUnresolvedClashes();
+    List<ClashRecord> getAllClashes();
+}
+
+
+
+
+
+EventMergeService.java
+
+
+package com.example.demo.service;
+
+import com.example.demo.entity.EventMergeRecord;
+import java.time.LocalDate;
+import java.util.List;
+
+public interface EventMergeService {
+    EventMergeRecord mergeEvents(List<Long> eventIds, String reason);
+    List<EventMergeRecord> getAllMergeRecords();
+    EventMergeRecord getMergeRecordById(Long id);
+    List<EventMergeRecord> getMergeRecordsByDate(LocalDate start, LocalDate end);
+}
+
+HarmonizedCalendarService.java
+
+package com.example.demo.service;
+
+import com.example.demo.entity.HarmonizedCalendar;
+import java.time.LocalDate;
+import java.util.List;
+
+public interface HarmonizedCalendarService {
+    HarmonizedCalendar generateHarmonizedCalendar(String title, String generatedBy);
+    HarmonizedCalendar getCalendarById(Long id);
+    List<HarmonizedCalendar> getAllCalendars();
+    List<HarmonizedCalendar> getCalendarsWithinRange(LocalDate start, LocalDate end);
+}
+
+
+UserAccountService.java
+
+package com.example.demo.service;
+
+import com.example.demo.entity.UserAccount;
+import java.util.List;
+
+public interface UserAccountService {
+    UserAccount register(UserAccount user);
+    UserAccount findByEmail(String email);
+    UserAccount getUser(Long id);
+    List<UserAccount> getAllUsers();
+}
+
+servlets
+
+SimpleStatusServlet.java
+
+package com.example.demo.service;
+
+import com.example.demo.entity.UserAccount;
+import java.util.List;
+
+public interface UserAccountService {
+    UserAccount register(UserAccount user);
+    UserAccount findByEmail(String email);
+    UserAccount getUser(Long id);
+    List<UserAccount> getAllUsers();
+}
+
+
+
+application.properties
+
+spring.application.name=Multi-Branch Academic Calendar Harmonizer
+server.port=8084
+spring.datasource.url=jdbc:mysql://localhost:3306/academic_calendar?createDatabaseIfNotExist=true
+spring.datasource.username=root
+spring.datasource.password=root
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+jwt.secret=mySecretKeyForJWTTokenGenerationAndValidation12345
+jwt.expiration=86400000
+springdoc.api-docs.path=/v3/api-docs
+springdoc.swagger-ui.path=/swagger-ui.html
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
