@@ -1,4 +1,3 @@
-
 package com.example.demo.dto;
 
 public class ApiResponse {
@@ -21,9 +20,3 @@ public class ApiResponse {
     public Object getData() { return data; }
     public void setData(Object data) { this.data = data; }
 }
-
-
-
-
-
-
