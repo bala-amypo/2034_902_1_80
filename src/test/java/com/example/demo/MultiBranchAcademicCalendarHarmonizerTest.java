@@ -608,7 +608,7 @@ public class MultiBranchAcademicCalendarHarmonizerTest {
         UserAccount ua = new UserAccount(16L, "R", "roleclaim@example.com",
                 "ENC_pwd", "ADMIN", "Dept", LocalDateTime.now());
         String token = jwtUtil.generateTokenForUser(ua);
-        Object role = jwtUtil.parseToken(token).getPayload().get("role");
+        Object role = jwtUtil.parseToken(token).getBody().get("role");
         Assert.assertEquals(role, "ADMIN");
     }
 
@@ -617,7 +617,7 @@ public class MultiBranchAcademicCalendarHarmonizerTest {
         UserAccount ua = new UserAccount(17L, "I", "idclaim@example.com",
                 "ENC_pwd", "REVIEWER", "Dept", LocalDateTime.now());
         String token = jwtUtil.generateTokenForUser(ua);
-        Object id = jwtUtil.parseToken(token).getPayload().get("userId");
+        Object id = jwtUtil.parseToken(token).getBody().get("userId");
         Assert.assertNotNull(id);
     }
 
