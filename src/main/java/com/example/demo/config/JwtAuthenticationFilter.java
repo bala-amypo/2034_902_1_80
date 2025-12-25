@@ -1,7 +1,7 @@
+
 package com.example.demo.config;
 
 import com.example.demo.security.JwtUtil;
-import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,7 +17,6 @@ import java.util.Collections;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
-
     private final JwtUtil jwtUtil;
 
     public JwtAuthenticationFilter(JwtUtil jwtUtil) {
@@ -25,38 +24,33 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain filterChain
-    ) throws ServletException, IOException {
-
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) 
+            throws ServletException, IOException {
+        
         String authHeader = request.getHeader("Authorization");
-
+        
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
-
+            
             try {
-                String email = jwtUtil.extractEmail(token);
-                String role = jwtUtil.extractRole(token);
-
-                UsernamePasswordAuthenticationToken authentication =
+                if (jwtUtil.validateToken(token)) {
+                    String email = jwtUtil.extractEmail(token);
+                    String role = jwtUtil.extractRole(token);
+                    
+                    UsernamePasswordAuthenticationToken authentication = 
                         new UsernamePasswordAuthenticationToken(
-                                email,
-                                null,
-                                Collections.singletonList(
-                                        new SimpleGrantedAuthority("ROLE_" + role)
-                                )
+                            email, 
+                            null, 
+                            Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role))
                         );
-
-                SecurityContextHolder.getContext()
-                        .setAuthentication(authentication);
-
-            } catch (JwtException ex) {
-                SecurityContextHolder.clearContext();
+                    
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+            } catch (Exception e) {
+                // Token is invalid, continue without authentication
             }
         }
-
+        
         filterChain.doFilter(request, response);
     }
 }
