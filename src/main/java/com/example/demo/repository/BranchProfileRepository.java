@@ -1,5 +1,4 @@
 
-
 package com.example.demo.repository;
 
 import com.example.demo.entity.BranchProfile;
@@ -9,7 +8,5 @@ import java.util.Optional;
 
 @Repository
 public interface BranchProfileRepository extends JpaRepository<BranchProfile, Long> {
-    Optional<BranchProfile> findByBranchCode(String branchCode);
+    Optional<BranchProfile> findByBranchCode(String branchCode);
 }
-
-

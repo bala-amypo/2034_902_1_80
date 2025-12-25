@@ -1,3 +1,5 @@
+
+
 package com.example.demo.repository;
 
 import com.example.demo.entity.HarmonizedCalendar;
@@ -8,6 +10,8 @@ import java.util.List;
 
 @Repository
 public interface HarmonizedCalendarRepository extends JpaRepository<HarmonizedCalendar, Long> {
-    List<HarmonizedCalendar> findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(LocalDate date1, LocalDate date2);
+    List<HarmonizedCalendar> findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(LocalDate date1, LocalDate date2);
 }
+
+
 
