@@ -599,7 +599,7 @@ public class MultiBranchAcademicCalendarHarmonizerTest {
         UserAccount ua = new UserAccount(15L, "E", "emailclaim@example.com",
                 "ENC_pwd", "REVIEWER", "Dept", LocalDateTime.now());
         String token = jwtUtil.generateTokenForUser(ua);
-        Object email = jwtUtil.parseToken(token).getPayload().get("email");
+        Object email = jwtUtil.parseToken(token).getBody().get("email");
         Assert.assertEquals(email, "emailclaim@example.com");
     }
 
