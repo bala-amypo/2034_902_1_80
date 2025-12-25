@@ -1,12 +1,18 @@
 
-package com.example.demo.service;
+package com.example.demo.servlet;
 
-import com.example.demo.entity.UserAccount;
-import java.util.List;
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 
-public interface UserAccountService {
-    UserAccount register(UserAccount user);
-    UserAccount findByEmail(String email);
-    UserAccount getUser(Long id);
-    List<UserAccount> getAllUsers();
+@WebServlet(urlPatterns = "/simple-status")
+public class SimpleStatusServlet extends HttpServlet {
+    @Override
+    public void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.setStatus(200);
+        response.getWriter().write("Servlet Alive");
+    }
 }
+
