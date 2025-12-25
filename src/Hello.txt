@@ -1,10 +1,10 @@
-Config
-1.JwtAuthenticationFilter.java
+config(3)
+
+JwtAuthenticationFilter.java
 
 package com.example.demo.config;
 
 import com.example.demo.security.JwtUtil;
-import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,42 +14,52 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+
 import java.io.IOException;
 import java.util.Collections;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+    private final JwtUtil jwtUtil;
 
-    private final JwtUtil jwtUtil;
+    public JwtAuthenticationFilter(JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
 
-    public JwtAuthenticationFilter(JwtUtil jwtUtil) {
-        this.jwtUtil = jwtUtil;
-    }
-
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
-            throws ServletException, IOException {
-
-        String authHeader = request.getHeader("Authorization");
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            try {
-                String email = jwtUtil.extractEmail(token);
-                String role = jwtUtil.extractRole(token);
-                
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        email, null, Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role))
-                );
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-            } catch (JwtException e) {
-                // Invalid token, continue without authentication
-            }
-        }
-        filterChain.doFilter(request, response);
-    }
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) 
+            throws ServletException, IOException {
+        
+        String authHeader = request.getHeader("Authorization");
+        
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            
+            try {
+                if (jwtUtil.validateToken(token)) {
+                    String email = jwtUtil.extractEmail(token);
+                    String role = jwtUtil.extractRole(token);
+                    
+                    UsernamePasswordAuthenticationToken authentication = 
+                        new UsernamePasswordAuthenticationToken(
+                            email, 
+                            null, 
+                            Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role))
+                        );
+                    
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+            } catch (Exception e) {
+                // Token is invalid, continue without authentication
+            }
+        }
+        
+        filterChain.doFilter(request, response);
+    }
 }
 
-2.OpenApiConfig.java
+
+OpenApiConfig.java
 
 package com.example.demo.config;
 
@@ -57,34 +67,40 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.Components;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class OpenApiConfig {
 
-    @Bean
-    public OpenAPI customOpenAPI() {
-        return new OpenAPI()
-                .info(new Info()
-                        .title("Multi-Branch Academic Calendar Harmonizer")
-                        .description("API for managing academic calendars across multiple branches")
-                        .version("1.0.0"))
-                .addSecurityItem(new SecurityRequirement().addList("Bearer Authentication"))
-                .components(new io.swagger.v3.oas.models.Components()
-                        .addSecuritySchemes("Bearer Authentication",
-                                new SecurityScheme()
-                                        .type(SecurityScheme.Type.HTTP)
-                                        .scheme("bearer")
-                                        .bearerFormat("JWT")));
-    }
+    @Bean
+    public OpenAPI customOpenAPI() {
+        return new OpenAPI()
+                .info(new Info()
+                        .title("Multi-Branch Academic Calendar Harmonizer")
+                        .description("A comprehensive system for managing and harmonizing academic calendars across multiple branches")
+                        .version("1.0.0"))
+                .addSecurityItem(new SecurityRequirement().addList("Bearer Authentication"))
+                .components(new Components()
+                        .addSecuritySchemes("Bearer Authentication",
+                                new SecurityScheme()
+                                        .type(SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")));
+    }
 }
 
-3.SecurityConfig.java
+
+SecurityConfig.java
+
+
 package com.example.demo.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -96,85 +112,104 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
+    
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    }
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
-        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
-    }
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
 
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
+    }
 
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        http.csrf(csrf -> csrf.disable())
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/**", "/swagger-ui/**", "/v3/api-docs/**", "/simple-status").permitAll()
-                .requestMatchers("/api/**").authenticated()
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/auth/**", "/swagger-ui/**", "/v3/api-docs/**", "/simple-status").permitAll()
+                .requestMatchers("/api/**").authenticated()
+                .anyRequest().permitAll()
+            )
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
-        return http.build();
-    }
+        return http.build();
+    }
 }
 
-Controller
+
+controller(6)
+
 AcademicEventController.java
+
+
 package com.example.demo.controller;
 
+import com.example.demo.dto.ApiResponse;
 import com.example.demo.entity.AcademicEvent;
 import com.example.demo.service.AcademicEventService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/events")
 @Tag(name = "Academic Events")
 public class AcademicEventController {
+    
+    private final AcademicEventService academicEventService;
 
-    private final AcademicEventService academicEventService;
+    public AcademicEventController(AcademicEventService academicEventService) {
+        this.academicEventService = academicEventService;
+    }
 
-    public AcademicEventController(AcademicEventService academicEventService) {
-        this.academicEventService = academicEventService;
-    }
+    @PostMapping
+    @Operation(summary = "Create event", description = "Create a new academic event")
+    public ResponseEntity<ApiResponse<AcademicEvent>> createEvent(@RequestBody AcademicEvent event) {
+        AcademicEvent createdEvent = academicEventService.createEvent(event);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Event created successfully", createdEvent));
+    }
 
-    @PostMapping
-    @Operation(summary = "Create academic event")
-    public ResponseEntity<AcademicEvent> createEvent(@RequestBody AcademicEvent event) {
-        return ResponseEntity.ok(academicEventService.createEvent(event));
-    }
+    @PutMapping("/{id}")
+    @Operation(summary = "Update event", description = "Update an existing academic event")
+    public ResponseEntity<ApiResponse<AcademicEvent>> updateEvent(
+            @Parameter(name = "id", description = "Event ID") @PathVariable Long id,
+            @RequestBody AcademicEvent event) {
+        AcademicEvent updatedEvent = academicEventService.updateEvent(id, event);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Event updated successfully", updatedEvent));
+    }
 
-    @PutMapping("/{id}")
-    @Operation(summary = "Update academic event")
-    public ResponseEntity<AcademicEvent> updateEvent(@PathVariable Long id, @RequestBody AcademicEvent event) {
-        return ResponseEntity.ok(academicEventService.updateEvent(id, event));
-    }
+    @GetMapping("/branch/{branchId}")
+    @Operation(summary = "Get events by branch", description = "Get all events for a specific branch")
+    public ResponseEntity<ApiResponse<List<AcademicEvent>>> getEventsByBranch(@Parameter(name = "branchId", description = "Branch ID") @PathVariable Long branchId) {
+        List<AcademicEvent> events = academicEventService.getEventsByBranch(branchId);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Events retrieved successfully", events));
+    }
 
-    @GetMapping("/branch/{branchId}")
-    @Operation(summary = "Get events by branch")
-    public ResponseEntity<List<AcademicEvent>> getEventsByBranch(@PathVariable Long branchId) {
-        return ResponseEntity.ok(academicEventService.getEventsByBranch(branchId));
-    }
+    @GetMapping("/{id}")
+    @Operation(summary = "Get event by ID", description = "Get academic event by ID")
+    public ResponseEntity<ApiResponse<AcademicEvent>> getEventById(@Parameter(name = "id", description = "Event ID") @PathVariable Long id) {
+        AcademicEvent event = academicEventService.getEventById(id);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Event retrieved successfully", event));
+    }
 
-    @GetMapping("/{id}")
-    @Operation(summary = "Get event by ID")
-    public ResponseEntity<AcademicEvent> getEventById(@PathVariable Long id) {
-        return ResponseEntity.ok(academicEventService.getEventById(id));
-    }
-
-    @GetMapping
-    @Operation(summary = "Get all events")
-    public ResponseEntity<List<AcademicEvent>> getAllEvents() {
-        return ResponseEntity.ok(academicEventService.getAllEvents());
-    }
+    @GetMapping
+    @Operation(summary = "Get all events", description = "Get list of all academic events")
+    public ResponseEntity<ApiResponse<List<AcademicEvent>>> getAllEvents() {
+        List<AcademicEvent> events = academicEventService.getAllEvents();
+        return ResponseEntity.ok(new ApiResponse<>(true, "Events retrieved successfully", events));
+    }
 }
 
 
@@ -189,10 +224,12 @@ import com.example.demo.entity.UserAccount;
 import com.example.demo.security.JwtUtil;
 import com.example.demo.service.UserAccountService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -201,180 +238,208 @@ import java.util.Map;
 @RequestMapping("/auth")
 @Tag(name = "Authentication")
 public class AuthController {
+    
+    private final UserAccountService userAccountService;
+    private final JwtUtil jwtUtil;
+    private final PasswordEncoder passwordEncoder;
 
-    private final UserAccountService userAccountService;
-    private final JwtUtil jwtUtil;
-    private final PasswordEncoder passwordEncoder;
+    public AuthController(UserAccountService userAccountService, JwtUtil jwtUtil, PasswordEncoder passwordEncoder) {
+        this.userAccountService = userAccountService;
+        this.jwtUtil = jwtUtil;
+        this.passwordEncoder = passwordEncoder;
+    }
 
-    public AuthController(UserAccountService userAccountService, JwtUtil jwtUtil, PasswordEncoder passwordEncoder) {
-        this.userAccountService = userAccountService;
-        this.jwtUtil = jwtUtil;
-        this.passwordEncoder = passwordEncoder;
-    }
+    @PostMapping("/register")
+    @Operation(summary = "Register new user", description = "Register a new user account")
+    public ResponseEntity<ApiResponse<UserAccount>> register(@RequestBody RegisterRequest request) {
+        UserAccount user = new UserAccount();
+        user.setFullName(request.getName());
+        user.setEmail(request.getEmail());
+        user.setPassword(request.getPassword());
+        user.setRole(request.getRole());
+        user.setDepartment(request.getDepartment());
+        
+        UserAccount createdUser = userAccountService.register(user);
+        return ResponseEntity.ok(new ApiResponse<>(true, "User registered successfully", createdUser));
+    }
 
-    @PostMapping("/register")
-    @Operation(summary = "Register a new user")
-    public ResponseEntity<ApiResponse> register(@RequestBody RegisterRequest request) {
-        UserAccount user = new UserAccount();
-        user.setFullName(request.getName());
-        user.setEmail(request.getEmail());
-        user.setPassword(request.getPassword());
-        user.setRole(request.getRole());
-        user.setDepartment(request.getDepartment());
-        
-        UserAccount created = userAccountService.register(user);
-        return ResponseEntity.ok(new ApiResponse(true, "User registered successfully", created));
-    }
+    @PostMapping("/login")
+    @Operation(summary = "User login", description = "Authenticate user and return JWT token")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@RequestBody LoginRequest request) {
+        UserAccount user = userAccountService.findByEmail(request.getEmail());
+        
+        if (passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            String token = jwtUtil.generateToken(user.getId(), user.getEmail(), user.getRole());
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("token", token);
+            response.put("user", user);
+            
+            return ResponseEntity.ok(new ApiResponse<>(true, "Login successful", response));
+        } else {
+            return ResponseEntity.badRequest().body(new ApiResponse<>(false, "Invalid credentials"));
+        }
+    }
 
-    @PostMapping("/login")
-    @Operation(summary = "Login user")
-    public ResponseEntity<ApiResponse> login(@RequestBody LoginRequest request) {
-        UserAccount user = userAccountService.findByEmail(request.getEmail());
-        
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            return ResponseEntity.badRequest().body(new ApiResponse(false, "Invalid credentials", null));
-        }
-        
-        String token = jwtUtil.generateToken(user.getId(), user.getEmail(), user.getRole());
-        Map<String, Object> data = new HashMap<>();
-        data.put("token", token);
-        data.put("user", user);
-        
-        return ResponseEntity.ok(new ApiResponse(true, "Login successful", data));
-    }
+    @GetMapping("/users")
+    @Operation(summary = "Get all users", description = "Get list of all users (Admin only)")
+    public ResponseEntity<ApiResponse<List<UserAccount>>> getAllUsers() {
+        List<UserAccount> users = userAccountService.getAllUsers();
+        return ResponseEntity.ok(new ApiResponse<>(true, "Users retrieved successfully", users));
+    }
 
-    @GetMapping("/users")
-    @Operation(summary = "Get all users")
-    public ResponseEntity<List<UserAccount>> getAllUsers() {
-        return ResponseEntity.ok(userAccountService.getAllUsers());
-    }
-
-    @GetMapping("/users/{id}")
-    @Operation(summary = "Get user by ID")
-    public ResponseEntity<UserAccount> getUser(@PathVariable Long id) {
-        return ResponseEntity.ok(userAccountService.getUser(id));
-    }
+    @GetMapping("/users/{id}")
+    @Operation(summary = "Get user by ID", description = "Get user details by ID (Admin only)")
+    public ResponseEntity<ApiResponse<UserAccount>> getUserById(@Parameter(name = "id", description = "User ID") @PathVariable Long id) {
+        UserAccount user = userAccountService.getUser(id);
+        return ResponseEntity.ok(new ApiResponse<>(true, "User retrieved successfully", user));
+    }
 }
 
-
 BranchProfileController.java
+
 package com.example.demo.controller;
 
+import com.example.demo.dto.ApiResponse;
 import com.example.demo.entity.BranchProfile;
 import com.example.demo.service.BranchProfileService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/branches")
 @Tag(name = "Branch Profiles")
 public class BranchProfileController {
+    
+    private final BranchProfileService branchProfileService;
 
-    private final BranchProfileService branchProfileService;
+    public BranchProfileController(BranchProfileService branchProfileService) {
+        this.branchProfileService = branchProfileService;
+    }
 
-    public BranchProfileController(BranchProfileService branchProfileService) {
-        this.branchProfileService = branchProfileService;
-    }
+    @PostMapping
+    @Operation(summary = "Create branch", description = "Create a new branch profile")
+    public ResponseEntity<ApiResponse<BranchProfile>> createBranch(@RequestBody BranchProfile branch) {
+        BranchProfile createdBranch = branchProfileService.createBranch(branch);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Branch created successfully", createdBranch));
+    }
 
-    @PostMapping
-    @Operation(summary = "Create branch profile")
-    public ResponseEntity<BranchProfile> createBranch(@RequestBody BranchProfile branch) {
-        return ResponseEntity.ok(branchProfileService.createBranch(branch));
-    }
+    @PutMapping("/{id}/status")
+    @Operation(summary = "Update branch status", description = "Update the active status of a branch")
+    public ResponseEntity<ApiResponse<BranchProfile>> updateBranchStatus(
+            @Parameter(name = "id", description = "Branch ID") @PathVariable Long id,
+            @Parameter(name = "active", description = "Active status") @RequestParam boolean active) {
+        BranchProfile updatedBranch = branchProfileService.updateBranchStatus(id, active);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Branch status updated successfully", updatedBranch));
+    }
 
-    @PutMapping("/{id}/status")
-    @Operation(summary = "Update branch status")
-    public ResponseEntity<BranchProfile> updateBranchStatus(@PathVariable Long id, @RequestParam boolean active) {
-        return ResponseEntity.ok(branchProfileService.updateBranchStatus(id, active));
-    }
+    @GetMapping("/{id}")
+    @Operation(summary = "Get branch by ID", description = "Get branch profile by ID")
+    public ResponseEntity<ApiResponse<BranchProfile>> getBranchById(@Parameter(name = "id", description = "Branch ID") @PathVariable Long id) {
+        BranchProfile branch = branchProfileService.getBranchById(id);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Branch retrieved successfully", branch));
+    }
 
-    @GetMapping("/{id}")
-    @Operation(summary = "Get branch by ID")
-    public ResponseEntity<BranchProfile> getBranchById(@PathVariable Long id) {
-        return ResponseEntity.ok(branchProfileService.getBranchById(id));
-    }
+    @GetMapping
+    @Operation(summary = "Get all branches", description = "Get list of all branch profiles")
+    public ResponseEntity<ApiResponse<List<BranchProfile>>> getAllBranches() {
+        List<BranchProfile> branches = branchProfileService.getAllBranches();
+        return ResponseEntity.ok(new ApiResponse<>(true, "Branches retrieved successfully", branches));
+    }
 
-    @GetMapping
-    @Operation(summary = "Get all branches")
-    public ResponseEntity<List<BranchProfile>> getAllBranches() {
-        return ResponseEntity.ok(branchProfileService.getAllBranches());
-    }
-
-    @GetMapping("/lookup/{branchCode}")
-    @Operation(summary = "Find branch by code")
-    public ResponseEntity<BranchProfile> findByBranchCode(@PathVariable String branchCode) {
-        return ResponseEntity.ok(branchProfileService.findByBranchCode(branchCode));
-    }
+    @GetMapping("/lookup/{branchCode}")
+    @Operation(summary = "Get branch by code", description = "Get branch profile by branch code")
+    public ResponseEntity<ApiResponse<BranchProfile>> getBranchByCode(@Parameter(name = "branchCode", description = "Branch code") @PathVariable String branchCode) {
+        BranchProfile branch = branchProfileService.findByBranchCode(branchCode);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Branch retrieved successfully", branch));
+    }
 }
 
+
+
 ClashRecordController.java
+
 package com.example.demo.controller;
 
+import com.example.demo.dto.ApiResponse;
 import com.example.demo.entity.ClashRecord;
 import com.example.demo.service.ClashDetectionService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/clashes")
 @Tag(name = "Clash Records")
 public class ClashRecordController {
+    
+    private final ClashDetectionService clashDetectionService;
 
-    private final ClashDetectionService clashDetectionService;
+    public ClashRecordController(ClashDetectionService clashDetectionService) {
+        this.clashDetectionService = clashDetectionService;
+    }
 
-    public ClashRecordController(ClashDetectionService clashDetectionService) {
-        this.clashDetectionService = clashDetectionService;
-    }
+    @PostMapping
+    @Operation(summary = "Log clash", description = "Log a new clash record")
+    public ResponseEntity<ApiResponse<ClashRecord>> logClash(@RequestBody ClashRecord clash) {
+        ClashRecord loggedClash = clashDetectionService.logClash(clash);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Clash logged successfully", loggedClash));
+    }
 
-    @PostMapping
-    @Operation(summary = "Log clash record")
-    public ResponseEntity<ClashRecord> logClash(@RequestBody ClashRecord clash) {
-        return ResponseEntity.ok(clashDetectionService.logClash(clash));
-    }
+    @PutMapping("/{id}/resolve")
+    @Operation(summary = "Resolve clash", description = "Mark a clash as resolved")
+    public ResponseEntity<ApiResponse<ClashRecord>> resolveClash(@Parameter(name = "id", description = "Clash ID") @PathVariable Long id) {
+        ClashRecord resolvedClash = clashDetectionService.resolveClash(id);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Clash resolved successfully", resolvedClash));
+    }
 
-    @PutMapping("/{id}/resolve")
-    @Operation(summary = "Resolve clash")
-    public ResponseEntity<ClashRecord> resolveClash(@PathVariable Long id) {
-        return ResponseEntity.ok(clashDetectionService.resolveClash(id));
-    }
+    @GetMapping("/event/{eventId}")
+    @Operation(summary = "Get clashes for event", description = "Get all clashes involving a specific event")
+    public ResponseEntity<ApiResponse<List<ClashRecord>>> getClashesForEvent(@Parameter(name = "eventId", description = "Event ID") @PathVariable Long eventId) {
+        List<ClashRecord> clashes = clashDetectionService.getClashesForEvent(eventId);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Clashes retrieved successfully", clashes));
+    }
 
-    @GetMapping("/event/{eventId}")
-    @Operation(summary = "Get clashes for event")
-    public ResponseEntity<List<ClashRecord>> getClashesForEvent(@PathVariable Long eventId) {
-        return ResponseEntity.ok(clashDetectionService.getClashesForEvent(eventId));
-    }
+    @GetMapping("/unresolved")
+    @Operation(summary = "Get unresolved clashes", description = "Get all unresolved clash records")
+    public ResponseEntity<ApiResponse<List<ClashRecord>>> getUnresolvedClashes() {
+        List<ClashRecord> clashes = clashDetectionService.getUnresolvedClashes();
+        return ResponseEntity.ok(new ApiResponse<>(true, "Unresolved clashes retrieved successfully", clashes));
+    }
 
-    @GetMapping("/unresolved")
-    @Operation(summary = "Get unresolved clashes")
-    public ResponseEntity<List<ClashRecord>> getUnresolvedClashes() {
-        return ResponseEntity.ok(clashDetectionService.getUnresolvedClashes());
-    }
-
-    @GetMapping
-    @Operation(summary = "Get all clashes")
-    public ResponseEntity<List<ClashRecord>> getAllClashes() {
-        return ResponseEntity.ok(clashDetectionService.getAllClashes());
-    }
+    @GetMapping
+    @Operation(summary = "Get all clashes", description = "Get list of all clash records")
+    public ResponseEntity<ApiResponse<List<ClashRecord>>> getAllClashes() {
+        List<ClashRecord> clashes = clashDetectionService.getAllClashes();
+        return ResponseEntity.ok(new ApiResponse<>(true, "Clashes retrieved successfully", clashes));
+    }
 }
 
 
-EventMergeCotroller.java
+EventMergeController.java
+
 
 package com.example.demo.controller;
 
+import com.example.demo.dto.ApiResponse;
 import com.example.demo.entity.EventMergeRecord;
 import com.example.demo.service.EventMergeService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -383,55 +448,64 @@ import java.util.Map;
 @RequestMapping("/api/merge-records")
 @Tag(name = "Event Merge Records")
 public class EventMergeController {
+    
+    private final EventMergeService eventMergeService;
 
-    private final EventMergeService eventMergeService;
+    public EventMergeController(EventMergeService eventMergeService) {
+        this.eventMergeService = eventMergeService;
+    }
 
-    public EventMergeController(EventMergeService eventMergeService) {
-        this.eventMergeService = eventMergeService;
-    }
+    @PostMapping
+    @Operation(summary = "Merge events", description = "Merge multiple events into a single record")
+    public ResponseEntity<ApiResponse<EventMergeRecord>> mergeEvents(@RequestBody Map<String, Object> request) {
+        @SuppressWarnings("unchecked")
+        List<Long> eventIds = (List<Long>) request.get("eventIds");
+        String reason = (String) request.get("reason");
+        
+        EventMergeRecord mergeRecord = eventMergeService.mergeEvents(eventIds, reason);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Events merged successfully", mergeRecord));
+    }
 
-    @PostMapping
-    @Operation(summary = "Merge events")
-    public ResponseEntity<EventMergeRecord> mergeEvents(@RequestBody Map<String, Object> request) {
-        @SuppressWarnings("unchecked")
-        List<Long> eventIds = (List<Long>) request.get("eventIds");
-        String reason = (String) request.get("reason");
-        return ResponseEntity.ok(eventMergeService.mergeEvents(eventIds, reason));
-    }
+    @GetMapping("/{id}")
+    @Operation(summary = "Get merge record by ID", description = "Get event merge record by ID")
+    public ResponseEntity<ApiResponse<EventMergeRecord>> getMergeRecordById(@Parameter(name = "id", description = "Merge record ID") @PathVariable Long id) {
+        EventMergeRecord mergeRecord = eventMergeService.getMergeRecordById(id);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Merge record retrieved successfully", mergeRecord));
+    }
 
-    @GetMapping("/{id}")
-    @Operation(summary = "Get merge record by ID")
-    public ResponseEntity<EventMergeRecord> getMergeRecordById(@PathVariable Long id) {
-        return ResponseEntity.ok(eventMergeService.getMergeRecordById(id));
-    }
+    @GetMapping
+    @Operation(summary = "Get all merge records", description = "Get list of all event merge records")
+    public ResponseEntity<ApiResponse<List<EventMergeRecord>>> getAllMergeRecords() {
+        List<EventMergeRecord> mergeRecords = eventMergeService.getAllMergeRecords();
+        return ResponseEntity.ok(new ApiResponse<>(true, "Merge records retrieved successfully", mergeRecords));
+    }
 
-    @GetMapping
-    @Operation(summary = "Get all merge records")
-    public ResponseEntity<List<EventMergeRecord>> getAllMergeRecords() {
-        return ResponseEntity.ok(eventMergeService.getAllMergeRecords());
-    }
-
-    @GetMapping("/range")
-    @Operation(summary = "Get merge records by date range")
-    public ResponseEntity<List<EventMergeRecord>> getMergeRecordsByDate(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
-        return ResponseEntity.ok(eventMergeService.getMergeRecordsByDate(start, end));
-    }
+    @GetMapping("/range")
+    @Operation(summary = "Get merge records by date range", description = "Get merge records within a date range")
+    public ResponseEntity<ApiResponse<List<EventMergeRecord>>> getMergeRecordsByDate(
+            @Parameter(name = "start", description = "Start date") @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
+            @Parameter(name = "end", description = "End date") @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+        List<EventMergeRecord> mergeRecords = eventMergeService.getMergeRecordsByDate(start, end);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Merge records retrieved successfully", mergeRecords));
+    }
 }
+
 
 
 HarmonizedCalendarController.java
 
 package com.example.demo.controller;
 
+import com.example.demo.dto.ApiResponse;
 import com.example.demo.entity.HarmonizedCalendar;
 import com.example.demo.service.HarmonizedCalendarService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -440,97 +514,102 @@ import java.util.Map;
 @RequestMapping("/api/harmonized-calendars")
 @Tag(name = "Harmonized Calendars")
 public class HarmonizedCalendarController {
+    
+    private final HarmonizedCalendarService harmonizedCalendarService;
 
-    private final HarmonizedCalendarService harmonizedCalendarService;
+    public HarmonizedCalendarController(HarmonizedCalendarService harmonizedCalendarService) {
+        this.harmonizedCalendarService = harmonizedCalendarService;
+    }
 
-    public HarmonizedCalendarController(HarmonizedCalendarService harmonizedCalendarService) {
-        this.harmonizedCalendarService = harmonizedCalendarService;
-    }
+    @PostMapping("/generate")
+    @Operation(summary = "Generate harmonized calendar", description = "Generate a new harmonized calendar")
+    public ResponseEntity<ApiResponse<HarmonizedCalendar>> generateHarmonizedCalendar(@RequestBody Map<String, String> request) {
+        String title = request.get("title");
+        String generatedBy = request.get("generatedBy");
+        
+        HarmonizedCalendar calendar = harmonizedCalendarService.generateHarmonizedCalendar(title, generatedBy);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Harmonized calendar generated successfully", calendar));
+    }
 
-    @PostMapping("/generate")
-    @Operation(summary = "Generate harmonized calendar")
-    public ResponseEntity<HarmonizedCalendar> generateHarmonizedCalendar(@RequestBody Map<String, String> request) {
-        String title = request.get("title");
-        String generatedBy = request.get("generatedBy");
-        return ResponseEntity.ok(harmonizedCalendarService.generateHarmonizedCalendar(title, generatedBy));
-    }
+    @GetMapping("/{id}")
+    @Operation(summary = "Get calendar by ID", description = "Get harmonized calendar by ID")
+    public ResponseEntity<ApiResponse<HarmonizedCalendar>> getCalendarById(@Parameter(name = "id", description = "Calendar ID") @PathVariable Long id) {
+        HarmonizedCalendar calendar = harmonizedCalendarService.getCalendarById(id);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Calendar retrieved successfully", calendar));
+    }
 
-    @GetMapping("/{id}")
-    @Operation(summary = "Get calendar by ID")
-    public ResponseEntity<HarmonizedCalendar> getCalendarById(@PathVariable Long id) {
-        return ResponseEntity.ok(harmonizedCalendarService.getCalendarById(id));
-    }
+    @GetMapping
+    @Operation(summary = "Get all calendars", description = "Get list of all harmonized calendars")
+    public ResponseEntity<ApiResponse<List<HarmonizedCalendar>>> getAllCalendars() {
+        List<HarmonizedCalendar> calendars = harmonizedCalendarService.getAllCalendars();
+        return ResponseEntity.ok(new ApiResponse<>(true, "Calendars retrieved successfully", calendars));
+    }
 
-    @GetMapping
-    @Operation(summary = "Get all calendars")
-    public ResponseEntity<List<HarmonizedCalendar>> getAllCalendars() {
-        return ResponseEntity.ok(harmonizedCalendarService.getAllCalendars());
-    }
-
-    @GetMapping("/range")
-    @Operation(summary = "Get calendars within date range")
-    public ResponseEntity<List<HarmonizedCalendar>> getCalendarsWithinRange(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
-        return ResponseEntity.ok(harmonizedCalendarService.getCalendarsWithinRange(start, end));
-    }
+    @GetMapping("/range")
+    @Operation(summary = "Get calendars by date range", description = "Get calendars within a date range")
+    public ResponseEntity<ApiResponse<List<HarmonizedCalendar>>> getCalendarsWithinRange(
+            @Parameter(name = "start", description = "Start date") @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
+            @Parameter(name = "end", description = "End date") @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+        List<HarmonizedCalendar> calendars = harmonizedCalendarService.getCalendarsWithinRange(start, end);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Calendars retrieved successfully", calendars));
+    }
 }
 
 
-Dto
+dto(3)
 
 ApiResponse.java
 
 package com.example.demo.dto;
 
-public class ApiResponse {
-    private boolean success;
-    private String message;
-    private Object data;
+public class ApiResponse<T> {
+    private boolean success;
+    private String message;
+    private T data;
 
-    public ApiResponse() {}
+    public ApiResponse() {}
 
-    public ApiResponse(boolean success, String message, Object data) {
-        this.success = success;
-        this.message = message;
-        this.data = data;
-    }
+    public ApiResponse(boolean success, String message) {
+        this.success = success;
+        this.message = message;
+    }
 
-    public boolean isSuccess() { return success; }
-    public void setSuccess(boolean success) { this.success = success; }
-    public String getMessage() { return message; }
-    public void setMessage(String message) { this.message = message; }
-    public Object getData() { return data; }
-    public void setData(Object data) { this.data = data; }
+    public ApiResponse(boolean success, String message, T data) {
+        this.success = success;
+        this.message = message;
+        this.data = data;
+    }
+
+    public boolean isSuccess() { return success; }
+    public void setSuccess(boolean success) { this.success = success; }
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
+    public T getData() { return data; }
+    public void setData(T data) { this.data = data; }
 }
+
 
 
 LoginRequest.java
 
 package com.example.demo.dto;
 
-public class ApiResponse {
-    private boolean success;
-    private String message;
-    private Object data;
+public class LoginRequest {
+    private String email;
+    private String password;
 
-    public ApiResponse() {}
+    public LoginRequest() {}
 
-    public ApiResponse(boolean success, String message, Object data) {
-        this.success = success;
-        this.message = message;
-        this.data = data;
-    }
+    public LoginRequest(String email, String password) {
+        this.email = email;
+        this.password = password;
+    }
 
-    public boolean isSuccess() { return success; }
-    public void setSuccess(boolean success) { this.success = success; }
-    public String getMessage() { return message; }
-    public void setMessage(String message) { this.message = message; }
-    public Object getData() { return data; }
-    public void setData(Object data) { this.data = data; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
 }
-
-entity
 
 
 
@@ -540,83 +619,113 @@ RegisterRequest.java
 package com.example.demo.dto;
 
 public class RegisterRequest {
-    private String name;
-    private String email;
-    private String password;
-    private String role;
-    private String department;
+    private String name;
+    private String email;
+    private String password;
+    private String role;
+    private String department;
 
-    public RegisterRequest() {}
+    public RegisterRequest() {}
 
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
-    public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email; }
-    public String getPassword() { return password; }
-    public void setPassword(String password) { this.password = password; }
-    public String getRole() { return role; }
-    public void setRole(String role) { this.role = role; }
-    public String getDepartment() { return department; }
-    public void setDepartment(String department) { this.department = department; }
+    public RegisterRequest(String name, String email, String password, String role, String department) {
+        this.name = name;
+        this.email = email;
+        this.password = password;
+        this.role = role;
+        this.department = department;
+    }
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
+    public String getDepartment() { return department; }
+    public void setDepartment(String department) { this.department = department; }
 }
 
-
-Entity
+entity(6)
 
 AcademicEvent.java
 
+package com.example.demo.entity;
 
-false)
-    private LocalDate startDate;
+import jakarta.persistence.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 
-    @Column(nullable = false)
-    private LocalDate endDate;
+@Entity
+@Table(name = "academic_events")
+public class AcademicEvent {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "branch_id")
+    private Long branchId;
+    
+    private String title;
+    
+    @Column(name = "event_type")
+    private String eventType;
+    
+    @Column(name = "start_date")
+    private LocalDate startDate;
+    
+    @Column(name = "end_date")
+    private LocalDate endDate;
+    
+    private String location;
+    private String description;
+    
+    @Column(name = "submitted_at")
+    private LocalDateTime submittedAt;
 
-    private String location;
+    public AcademicEvent() {}
 
-    private String description;
+    public AcademicEvent(Long id, Long branchId, String title, String eventType, LocalDate startDate, LocalDate endDate, String location, String description, LocalDateTime submittedAt) {
+        this.id = id;
+        this.branchId = branchId;
+        this.title = title;
+        this.eventType = eventType;
+        this.startDate = startDate;
+        this.endDate = endDate;
+        this.location = location;
+        this.description = description;
+        this.submittedAt = submittedAt;
+    }
 
-    @Column(nullable = false)
-    private LocalDateTime submittedAt;
+    @PrePersist
+    public void prePersist() {
+        if (submittedAt == null) {
+            submittedAt = LocalDateTime.now();
+        }
+    }
 
-    public AcademicEvent() {}
-
-    public AcademicEvent(Long id, Long branchId, String title, String eventType, LocalDate startDate, LocalDate endDate, String location, String description, LocalDateTime submittedAt) {
-        this.id = id;
-        this.branchId = branchId;
-        this.title = title;
-        this.eventType = eventType;
-        this.startDate = startDate;
-        this.endDate = endDate;
-        this.location = location;
-        this.description = description;
-        this.submittedAt = submittedAt;
-    }
-
-    @PrePersist
-    protected void onCreate() {
-        submittedAt = LocalDateTime.now();
-    }
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public Long getBranchId() { return branchId; }
-    public void setBranchId(Long branchId) { this.branchId = branchId; }
-    public String getTitle() { return title; }
-    public void setTitle(String title) { this.title = title; }
-    public String getEventType() { return eventType; }
-    public void setEventType(String eventType) { this.eventType = eventType; }
-    public LocalDate getStartDate() { return startDate; }
-    public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
-    public LocalDate getEndDate() { return endDate; }
-    public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
-    public String getLocation() { return location; }
-    public void setLocation(String location) { this.location = location; }
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
-    public LocalDateTime getSubmittedAt() { return submittedAt; }
-    public void setSubmittedAt(LocalDateTime submittedAt) { this.submittedAt = submittedAt; }
+    // Getters and setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getEventType() { return eventType; }
+    public void setEventType(String eventType) { this.eventType = eventType; }
+    public LocalDate getStartDate() { return startDate; }
+    public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+    public LocalDate getEndDate() { return endDate; }
+    public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
+    public String getLocation() { return location; }
+    public void setLocation(String location) { this.location = location; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public LocalDateTime getSubmittedAt() { return submittedAt; }
+    public void setSubmittedAt(LocalDateTime submittedAt) { this.submittedAt = submittedAt; }
 }
+
 
 
 BranchProfile.java
@@ -629,54 +738,58 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "branch_profiles")
 public class BranchProfile {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "branch_code", unique = true)
+    private String branchCode;
+    
+    @Column(name = "branch_name")
+    private String branchName;
+    
+    @Column(name = "contact_email")
+    private String contactEmail;
+    
+    @Column(name = "last_sync_at")
+    private LocalDateTime lastSyncAt;
+    
+    private Boolean active;
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    public BranchProfile() {}
 
-    @Column(unique = true, nullable = false)
-    private String branchCode;
+    public BranchProfile(Long id, String branchCode, String branchName, String contactEmail, LocalDateTime lastSyncAt, Boolean active) {
+        this.id = id;
+        this.branchCode = branchCode;
+        this.branchName = branchName;
+        this.contactEmail = contactEmail;
+        this.lastSyncAt = lastSyncAt;
+        this.active = active;
+    }
 
-    @Column(nullable = false)
-    private String branchName;
+    @PrePersist
+    public void prePersist() {
+        if (lastSyncAt == null) {
+            lastSyncAt = LocalDateTime.now();
+        }
+        if (active == null) {
+            active = true;
+        }
+    }
 
-    private String contactEmail;
-
-    @Column(nullable = false)
-    private LocalDateTime lastSyncAt;
-
-    @Column(nullable = false)
-    private Boolean active = true;
-
-    public BranchProfile() {}
-
-    public BranchProfile(Long id, String branchCode, String branchName, String contactEmail, LocalDateTime lastSyncAt, Boolean active) {
-        this.id = id;
-        this.branchCode = branchCode;
-        this.branchName = branchName;
-        this.contactEmail = contactEmail;
-        this.lastSyncAt = lastSyncAt;
-        this.active = active;
-    }
-
-    @PrePersist
-    protected void onCreate() {
-        lastSyncAt = LocalDateTime.now();
-        if (active == null) active = true;
-    }
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public String getBranchCode() { return branchCode; }
-    public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
-    public String getBranchName() { return branchName; }
-    public void setBranchName(String branchName) { this.branchName = branchName; }
-    public String getContactEmail() { return contactEmail; }
-    public void setContactEmail(String contactEmail) { this.contactEmail = contactEmail; }
-    public LocalDateTime getLastSyncAt() { return lastSyncAt; }
-    public void setLastSyncAt(LocalDateTime lastSyncAt) { this.lastSyncAt = lastSyncAt; }
-    public Boolean getActive() { return active; }
-    public void setActive(Boolean active) { this.active = active; }
+    // Getters and setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getBranchCode() { return branchCode; }
+    public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
+    public String getBranchName() { return branchName; }
+    public void setBranchName(String branchName) { this.branchName = branchName; }
+    public String getContactEmail() { return contactEmail; }
+    public void setContactEmail(String contactEmail) { this.contactEmail = contactEmail; }
+    public LocalDateTime getLastSyncAt() { return lastSyncAt; }
+    public void setLastSyncAt(LocalDateTime lastSyncAt) { this.lastSyncAt = lastSyncAt; }
+    public Boolean getActive() { return active; }
+    public void setActive(Boolean active) { this.active = active; }
 }
 
 
@@ -690,67 +803,73 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "clash_records")
 public class ClashRecord {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "event_a_id")
+    private Long eventAId;
+    
+    @Column(name = "event_b_id")
+    private Long eventBId;
+    
+    @Column(name = "clash_type")
+    private String clashType;
+    
+    private String severity;
+    private String details;
+    
+    @Column(name = "detected_at")
+    private LocalDateTime detectedAt;
+    
+    private Boolean resolved;
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    public ClashRecord() {}
 
-    @Column(nullable = false)
-    private Long eventAId;
+    public ClashRecord(Long id, Long eventAId, Long eventBId, String clashType, String severity, String details, LocalDateTime detectedAt, Boolean resolved) {
+        this.id = id;
+        this.eventAId = eventAId;
+        this.eventBId = eventBId;
+        this.clashType = clashType;
+        this.severity = severity;
+        this.details = details;
+        this.detectedAt = detectedAt;
+        this.resolved = resolved;
+    }
 
-    @Column(nullable = false)
-    private Long eventBId;
+    @PrePersist
+    public void prePersist() {
+        if (detectedAt == null) {
+            detectedAt = LocalDateTime.now();
+        }
+        if (resolved == null) {
+            resolved = false;
+        }
+    }
 
-    private String clashType;
-
-    private String severity;
-
-    private String details;
-
-    @Column(nullable = false)
-    private LocalDateTime detectedAt;
-
-    @Column(nullable = false)
-    private Boolean resolved = false;
-
-    public ClashRecord() {}
-
-    public ClashRecord(Long id, Long eventAId, Long eventBId, String clashType, String severity, String details, LocalDateTime detectedAt, Boolean resolved) {
-        this.id = id;
-        this.eventAId = eventAId;
-        this.eventBId = eventBId;
-        this.clashType = clashType;
-        this.severity = severity;
-        this.details = details;
-        this.detectedAt = detectedAt;
-        this.resolved = resolved;
-    }
-
-    @PrePersist
-    protected void onCreate() {
-        detectedAt = LocalDateTime.now();
-        if (resolved == null) resolved = false;
-    }
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public Long getEventAId() { return eventAId; }
-    public void setEventAId(Long eventAId) { this.eventAId = eventAId; }
-    public Long getEventBId() { return eventBId; }
-    public void setEventBId(Long eventBId) { this.eventBId = eventBId; }
-    public String getClashType() { return clashType; }
-    public void setClashType(String clashType) { this.clashType = clashType; }
-    public String getSeverity() { return severity; }
-    public void setSeverity(String severity) { this.severity = severity; }
-    public String getDetails() { return details; }
-    public void setDetails(String details) { this.details = details; }
-    public LocalDateTime getDetectedAt() { return detectedAt; }
-    public void setDetectedAt(LocalDateTime detectedAt) { this.detectedAt = detectedAt; }
-    public Boolean getResolved() { return resolved; }
-    public void setResolved(Boolean resolved) { this.resolved = resolved; }
+    // Getters and setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public Long getEventAId() { return eventAId; }
+    public void setEventAId(Long eventAId) { this.eventAId = eventAId; }
+    public Long getEventBId() { return eventBId; }
+    public void setEventBId(Long eventBId) { this.eventBId = eventBId; }
+    public String getClashType() { return clashType; }
+    public void setClashType(String clashType) { this.clashType = clashType; }
+    public String getSeverity() { return severity; }
+    public void setSeverity(String severity) { this.severity = severity; }
+    public String getDetails() { return details; }
+    public void setDetails(String details) { this.details = details; }
+    public LocalDateTime getDetectedAt() { return detectedAt; }
+    public void setDetectedAt(LocalDateTime detectedAt) { this.detectedAt = detectedAt; }
+    public Boolean getResolved() { return resolved; }
+    public void setResolved(Boolean resolved) { this.resolved = resolved; }
 }
 
+
+
 EventMergeRecord.java
+
 
 package com.example.demo.entity;
 
@@ -761,62 +880,68 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "event_merge_records")
 public class EventMergeRecord {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "source_event_ids")
+    private String sourceEventIds;
+    
+    @Column(name = "merged_title")
+    private String mergedTitle;
+    
+    @Column(name = "merged_start_date")
+    private LocalDate mergedStartDate;
+    
+    @Column(name = "merged_end_date")
+    private LocalDate mergedEndDate;
+    
+    @Column(name = "merge_reason")
+    private String mergeReason;
+    
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    public EventMergeRecord() {}
 
-    @Column(nullable = false)
-    private String sourceEventIds;
+    public EventMergeRecord(Long id, String sourceEventIds, String mergedTitle, LocalDate mergedStartDate, LocalDate mergedEndDate, String mergeReason, LocalDateTime createdAt) {
+        this.id = id;
+        this.sourceEventIds = sourceEventIds;
+        this.mergedTitle = mergedTitle;
+        this.mergedStartDate = mergedStartDate;
+        this.mergedEndDate = mergedEndDate;
+        this.mergeReason = mergeReason;
+        this.createdAt = createdAt;
+    }
 
-    @Column(nullable = false)
-    private String mergedTitle;
+    @PrePersist
+    public void prePersist() {
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
+    }
 
-    @Column(nullable = false)
-    private LocalDate mergedStartDate;
-
-    @Column(nullable = false)
-    private LocalDate mergedEndDate;
-
-    private String mergeReason;
-
-    @Column(nullable = false)
-    private LocalDateTime createdAt;
-
-    public EventMergeRecord() {}
-
-    public EventMergeRecord(Long id, String sourceEventIds, String mergedTitle, LocalDate mergedStartDate, LocalDate mergedEndDate, String mergeReason, LocalDateTime createdAt) {
-        this.id = id;
-        this.sourceEventIds = sourceEventIds;
-        this.mergedTitle = mergedTitle;
-        this.mergedStartDate = mergedStartDate;
-        this.mergedEndDate = mergedEndDate;
-        this.mergeReason = mergeReason;
-        this.createdAt = createdAt;
-    }
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public String getSourceEventIds() { return sourceEventIds; }
-    public void setSourceEventIds(String sourceEventIds) { this.sourceEventIds = sourceEventIds; }
-    public String getMergedTitle() { return mergedTitle; }
-    public void setMergedTitle(String mergedTitle) { this.mergedTitle = mergedTitle; }
-    public LocalDate getMergedStartDate() { return mergedStartDate; }
-    public void setMergedStartDate(LocalDate mergedStartDate) { this.mergedStartDate = mergedStartDate; }
-    public LocalDate getMergedEndDate() { return mergedEndDate; }
-    public void setMergedEndDate(LocalDate mergedEndDate) { this.mergedEndDate = mergedEndDate; }
-    public String getMergeReason() { return mergeReason; }
-    public void setMergeReason(String mergeReason) { this.mergeReason = mergeReason; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    // Getters and setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getSourceEventIds() { return sourceEventIds; }
+    public void setSourceEventIds(String sourceEventIds) { this.sourceEventIds = sourceEventIds; }
+    public String getMergedTitle() { return mergedTitle; }
+    public void setMergedTitle(String mergedTitle) { this.mergedTitle = mergedTitle; }
+    public LocalDate getMergedStartDate() { return mergedStartDate; }
+    public void setMergedStartDate(LocalDate mergedStartDate) { this.mergedStartDate = mergedStartDate; }
+    public LocalDate getMergedEndDate() { return mergedEndDate; }
+    public void setMergedEndDate(LocalDate mergedEndDate) { this.mergedEndDate = mergedEndDate; }
+    public String getMergeReason() { return mergeReason; }
+    public void setMergeReason(String mergeReason) { this.mergeReason = mergeReason; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
 
+
+
 HarmonizedCalendar.java
+
 
 package com.example.demo.entity;
 
@@ -827,63 +952,70 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "harmonized_calendars")
 public class HarmonizedCalendar {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    private String title;
+    
+    @Column(name = "generated_by")
+    private String generatedBy;
+    
+    @Column(name = "generated_at")
+    private LocalDateTime generatedAt;
+    
+    @Column(name = "effective_from")
+    private LocalDate effectiveFrom;
+    
+    @Column(name = "effective_to")
+    private LocalDate effectiveTo;
+    
+    @Column(name = "events_json", columnDefinition = "TEXT")
+    private String eventsJson;
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    public HarmonizedCalendar() {}
 
-    @Column(nullable = false)
-    private String title;
+    public HarmonizedCalendar(Long id, String title, String generatedBy, LocalDateTime generatedAt, LocalDate effectiveFrom, LocalDate effectiveTo, String eventsJson) {
+        this.id = id;
+        this.title = title;
+        this.generatedBy = generatedBy;
+        this.generatedAt = generatedAt;
+        this.effectiveFrom = effectiveFrom;
+        this.effectiveTo = effectiveTo;
+        this.eventsJson = eventsJson;
+    }
 
-    private String generatedBy;
+    @PrePersist
+    public void prePersist() {
+        if (generatedAt == null) {
+            generatedAt = LocalDateTime.now();
+        }
+    }
 
-    @Column(nullable = false)
-    private LocalDateTime generatedAt;
-
-    @Column(nullable = false)
-    private LocalDate effectiveFrom;
-
-    @Column(nullable = false)
-    private LocalDate effectiveTo;
-
-    @Column(columnDefinition = "TEXT")
-    private String eventsJson;
-
-    public HarmonizedCalendar() {}
-
-    public HarmonizedCalendar(Long id, String title, String generatedBy, LocalDateTime generatedAt, LocalDate effectiveFrom, LocalDate effectiveTo, String eventsJson) {
-        this.id = id;
-        this.title = title;
-        this.generatedBy = generatedBy;
-        this.generatedAt = generatedAt;
-        this.effectiveFrom = effectiveFrom;
-        this.effectiveTo = effectiveTo;
-        this.eventsJson = eventsJson;
-    }
-
-    @PrePersist
-    protected void onCreate() {
-        generatedAt = LocalDateTime.now();
-    }
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public String getTitle() { return title; }
-    public void setTitle(String title) { this.title = title; }
-    public String getGeneratedBy() { return generatedBy; }
-    public void setGeneratedBy(String generatedBy) { this.generatedBy = generatedBy; }
-    public LocalDateTime getGeneratedAt() { return generatedAt; }
-    public void setGeneratedAt(LocalDateTime generatedAt) { this.generatedAt = generatedAt; }
-    public LocalDate getEffectiveFrom() { return effectiveFrom; }
-    public void setEffectiveFrom(LocalDate effectiveFrom) { this.effectiveFrom = effectiveFrom; }
-    public LocalDate getEffectiveTo() { return effectiveTo; }
-    public void setEffectiveTo(LocalDate effectiveTo) { this.effectiveTo = effectiveTo; }
-    public String getEventsJson() { return eventsJson; }
-    public void setEventsJson(String eventsJson) { this.eventsJson = eventsJson; }
+    // Getters and setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getGeneratedBy() { return generatedBy; }
+    public void setGeneratedBy(String generatedBy) { this.generatedBy = generatedBy; }
+    public LocalDateTime getGeneratedAt() { return generatedAt; }
+    public void setGeneratedAt(LocalDateTime generatedAt) { this.generatedAt = generatedAt; }
+    public LocalDate getEffectiveFrom() { return effectiveFrom; }
+    public void setEffectiveFrom(LocalDate effectiveFrom) { this.effectiveFrom = effectiveFrom; }
+    public LocalDate getEffectiveTo() { return effectiveTo; }
+    public void setEffectiveTo(LocalDate effectiveTo) { this.effectiveTo = effectiveTo; }
+    public String getEventsJson() { return eventsJson; }
+    public void setEventsJson(String eventsJson) { this.eventsJson = eventsJson; }
 }
 
 
+
+
+
 UserAccount.java
+
+
 
 package com.example.demo.entity;
 
@@ -893,65 +1025,70 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "user_accounts")
 public class UserAccount {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "full_name")
+    private String fullName;
+    
+    @Column(unique = true)
+    private String email;
+    
+    private String password;
+    private String role;
+    private String department;
+    
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    public UserAccount() {}
 
-    @Column(nullable = false)
-    private String fullName;
+    public UserAccount(Long id, String fullName, String email, String password, String role, String department, LocalDateTime createdAt) {
+        this.id = id;
+        this.fullName = fullName;
+        this.email = email;
+        this.password = password;
+        this.role = role;
+        this.department = department;
+        this.createdAt = createdAt;
+    }
 
-    @Column(unique = true, nullable = false)
-    private String email;
+    @PrePersist
+    public void prePersist() {
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
+        if (role == null) {
+            role = "REVIEWER";
+        }
+    }
 
-    @Column(nullable = false)
-    private String password;
-
-    @Column(nullable = false)
-    private String role = "REVIEWER";
-
-    private String department;
-
-    @Column(nullable = false)
-    private LocalDateTime createdAt;
-
-    public UserAccount() {}
-
-    public UserAccount(Long id, String fullName, String email, String password, String role, String department, LocalDateTime createdAt) {
-        this.id = id;
-        this.fullName = fullName;
-        this.email = email;
-        this.password = password;
-        this.role = role;
-        this.department = department;
-        this.createdAt = createdAt;
-    }
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public String getFullName() { return fullName; }
-    public void setFullName(String fullName) { this.fullName = fullName; }
-    public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email; }
-    public String getPassword() { return password; }
-    public void setPassword(String password) { this.password = password; }
-    public String getRole() { return role; }
-    public void setRole(String role) { this.role = role; }
-    public String getDepartment() { return department; }
-    public void setDepartment(String department) { this.department = department; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    // Getters and setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getFullName() { return fullName; }
+    public void setFullName(String fullName) { this.fullName = fullName; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
+    public String getDepartment() { return department; }
+    public void setDepartment(String department) { this.department = department; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
 
 
-Exceptions
+
+
+
+exception (3)
 
 GlobalExceptionHandler.java
+
 
 package com.example.demo.exception;
 
@@ -964,34 +1101,36 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(ValidationException.class)
-    public ResponseEntity<ApiResponse> handleValidationException(ValidationException ex) {
-        return ResponseEntity.badRequest()
-                .body(new ApiResponse(false, ex.getMessage(), null));
-    }
+    @ExceptionHandler(ValidationException.class)
+    public ResponseEntity<ApiResponse<String>> handleValidationException(ValidationException ex) {
+        return ResponseEntity.badRequest()
+                .body(new ApiResponse<>(false, ex.getMessage()));
+    }
 
-    @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ApiResponse> handleResourceNotFoundException(ResourceNotFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ApiResponse(false, ex.getMessage(), null));
-    }
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiResponse<String>> handleResourceNotFoundException(ResourceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ApiResponse<>(false, ex.getMessage()));
+    }
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse> handleGenericException(Exception ex) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(new ApiResponse(false, "Internal server error", null));
-    }
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<String>> handleGenericException(Exception ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ApiResponse<>(false, "An error occurred: " + ex.getMessage()));
+    }
 }
+
 
 
 ResourceNotFoundException.java
 
+
 package com.example.demo.exception;
 
 public class ResourceNotFoundException extends RuntimeException {
-    public ResourceNotFoundException(String message) {
-        super(message);
-    }
+    public ResourceNotFoundException(String message) {
+        super(message);
+    }
 }
 
 
@@ -1000,22 +1139,16 @@ ValidationException.java
 package com.example.demo.exception;
 
 public class ValidationException extends RuntimeException {
-    public ValidationException(String message) {
-        super(message);
-    }
+    public ValidationException(String message) {
+        super(message);
+    }
 }
 
-
-
-
-
-
-Repository
+repository
 
 AcademicEventRepository.java
 
-
-package com.example.demo.repository;
+ package com.example.demo.repository;
 
 import com.example.demo.entity.AcademicEvent;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -1025,10 +1158,11 @@ import java.util.List;
 
 @Repository
 public interface AcademicEventRepository extends JpaRepository<AcademicEvent, Long> {
-    List<AcademicEvent> findByBranchId(Long branchId);
-    List<AcademicEvent> findByEventType(String eventType);
-    List<AcademicEvent> findByStartDateBetween(LocalDate start, LocalDate end);
+    List<AcademicEvent> findByBranchId(Long branchId);
+    List<AcademicEvent> findByEventType(String eventType);
+    List<AcademicEvent> findByStartDateBetween(LocalDate start, LocalDate end);
 }
+
 
 
 BranchProfileRepository.java
@@ -1043,9 +1177,8 @@ import java.util.Optional;
 
 @Repository
 public interface BranchProfileRepository extends JpaRepository<BranchProfile, Long> {
-    Optional<BranchProfile> findByBranchCode(String branchCode);
+    Optional<BranchProfile> findByBranchCode(String branchCode);
 }
-
 
 
 ClashRecordRepository.java
@@ -1059,13 +1192,13 @@ import java.util.List;
 
 @Repository
 public interface ClashRecordRepository extends JpaRepository<ClashRecord, Long> {
-    List<ClashRecord> findByEventAIdOrEventBId(Long eventAId, Long eventBId);
-    List<ClashRecord> findByResolvedFalse();
+    List<ClashRecord> findByEventAIdOrEventBId(Long eventAId, Long eventBId);
+    List<ClashRecord> findByResolvedFalse();
 }
 
 
-
 EventMergeRecordRepository.java
+
 
 package com.example.demo.repository;
 
@@ -1077,12 +1210,15 @@ import java.util.List;
 
 @Repository
 public interface EventMergeRecordRepository extends JpaRepository<EventMergeRecord, Long> {
-    List<EventMergeRecord> findByMergedStartDateBetween(LocalDate start, LocalDate end);
+    List<EventMergeRecord> findByMergedStartDateBetween(LocalDate start, LocalDate end);
 }
 
 
-HarmonizedCalendarRepository.java
 
+
+
+
+HarmonizedCalendarRepository.java
 
 
 
@@ -1097,12 +1233,15 @@ import java.util.List;
 
 @Repository
 public interface HarmonizedCalendarRepository extends JpaRepository<HarmonizedCalendar, Long> {
-    List<HarmonizedCalendar> findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(LocalDate date1, LocalDate date2);
+    List<HarmonizedCalendar> findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(LocalDate date1, LocalDate date2);
 }
 
 
 
+
+
 UserAccountRepository.java
+
 
 
 package com.example.demo.repository;
@@ -1114,14 +1253,16 @@ import java.util.Optional;
 
 @Repository
 public interface UserAccountRepository extends JpaRepository<UserAccount, Long> {
-    Optional<UserAccount> findByEmail(String email);
-    boolean existsByEmail(String email);
+    Optional<UserAccount> findByEmail(String email);
+    boolean existsByEmail(String email);
 }
 
 
-Security 
+security
+
 
 CustomUserDetailsService.java
+
 
 
 package com.example.demo.security;
@@ -1134,95 +1275,129 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+
 import java.util.Collections;
 
 @Service
 public class CustomUserDetailsService implements UserDetailsService {
+    private final UserAccountRepository userAccountRepository;
 
-    private final UserAccountRepository userAccountRepository;
+    public CustomUserDetailsService(UserAccountRepository userAccountRepository) {
+        this.userAccountRepository = userAccountRepository;
+    }
 
-    public CustomUserDetailsService(UserAccountRepository userAccountRepository) {
-        this.userAccountRepository = userAccountRepository;
-    }
+    @Override
+    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
+        UserAccount user = userAccountRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
 
-    @Override
-    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        UserAccount user = userAccountRepository.findByEmail(email)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
-
-        return new User(
-                user.getEmail(),
-                user.getPassword(),
-                Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + user.getRole()))
-        );
-    }
+        return new User(
+                user.getEmail(),
+                user.getPassword(),
+                Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + user.getRole()))
+        );
+    }
 }
+
 
 JwtUtil.java
 
 
+
 package com.example.demo.security;
 
+import com.example.demo.entity.UserAccount;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
 import javax.crypto.SecretKey;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
 @Component
 public class JwtUtil {
+    private SecretKey key;
+    private final long jwtExpiration = 86400000; // 24 hours
 
-    private final String secretKey;
-    private final long expirationMillis;
-    private SecretKey key;
+    public void initKey() {
+        this.key = Keys.secretKeyFor(SignatureAlgorithm.HS256);
+    }
 
-    public JwtUtil(@Value("${jwt.secret}") String secretKey, @Value("${jwt.expiration}") long expirationMillis) {
-        this.secretKey = secretKey;
-        this.expirationMillis = expirationMillis;
-        initKey();
-    }
+    public String generateToken(Long userId, String email, String role) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("userId", userId);
+        claims.put("email", email);
+        claims.put("role", role);
+        return generateToken(claims, email);
+    }
 
-    public void initKey() {
-        this.key = Keys.hmacShaKeyFor(secretKey.getBytes());
-    }
+    public String generateToken(Map<String, Object> claims, String subject) {
+        if (key == null) initKey();
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(subject)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + jwtExpiration))
+                .signWith(key)
+                .compact();
+    }
 
-    public String generateToken(Long userId, String email, String role) {
-        return Jwts.builder()
-                .claim("userId", userId)
-                .claim("email", email)
-                .claim("role", role)
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expirationMillis))
-                .signWith(key)
-                .compact();
-    }
+    public String generateTokenForUser(UserAccount user) {
+        return generateToken(user.getId(), user.getEmail(), user.getRole());
+    }
 
-    public Claims validateToken(String token) throws JwtException, ExpiredJwtException {
-        return Jwts.parserBuilder()
-                .setSigningKey(key)
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
-    }
+    public String extractUsername(String token) {
+        return parseToken(token).getBody().getSubject();
+    }
 
-    public String extractEmail(String token) {
-        return validateToken(token).get("email", String.class);
-    }
+    public String extractRole(String token) {
+        return (String) parseToken(token).getBody().get("role");
+    }
 
-    public Long extractUserId(String token) {
-        return validateToken(token).get("userId", Long.class);
-    }
+    public Long extractUserId(String token) {
+        Object userId = parseToken(token).getBody().get("userId");
+        return userId instanceof Integer ? ((Integer) userId).longValue() : (Long) userId;
+    }
 
-    public String extractRole(String token) {
-        return validateToken(token).get("role", String.class);
-    }
+    public String extractEmail(String token) {
+        return (String) parseToken(token).getBody().get("email");
+    }
+
+    public boolean isTokenValid(String token, String username) {
+        try {
+            String tokenUsername = extractUsername(token);
+            return tokenUsername.equals(username) && !isTokenExpired(token);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isTokenExpired(String token) {
+        return parseToken(token).getBody().getExpiration().before(new Date());
+    }
+
+    public Jws<Claims> parseToken(String token) {
+        if (key == null) initKey();
+        return Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
+                .parseClaimsJws(token);
+    }
+
+    public boolean validateToken(String token) {
+        try {
+            parseToken(token);
+            return true;
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
 }
 
-
-Service 
-impl 
-
+service(6+1)
+impl(6)
 AcademicEventServiceImpl.java
 
 package com.example.demo.service.impl;
@@ -1233,69 +1408,72 @@ import com.example.demo.exception.ValidationException;
 import com.example.demo.repository.AcademicEventRepository;
 import com.example.demo.service.AcademicEventService;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 
 @Service
 public class AcademicEventServiceImpl implements AcademicEventService {
+    private final AcademicEventRepository academicEventRepository;
 
-    private final AcademicEventRepository academicEventRepository;
+    public AcademicEventServiceImpl(AcademicEventRepository academicEventRepository) {
+        this.academicEventRepository = academicEventRepository;
+    }
 
-    public AcademicEventServiceImpl(AcademicEventRepository academicEventRepository) {
-        this.academicEventRepository = academicEventRepository;
-    }
+    @Override
+    public AcademicEvent createEvent(AcademicEvent event) {
+        if (event.getStartDate().isAfter(event.getEndDate())) {
+            throw new ValidationException("startDate cannot be after endDate");
+        }
+        return academicEventRepository.save(event);
+    }
 
-    @Override
-    public AcademicEvent createEvent(AcademicEvent event) {
-        if (event.getStartDate().isAfter(event.getEndDate())) {
-            throw new ValidationException("startDate cannot be after endDate");
-        }
-        return academicEventRepository.save(event);
-    }
+    @Override
+    public List<AcademicEvent> getEventsByBranch(Long branchId) {
+        return academicEventRepository.findByBranchId(branchId);
+    }
 
-    @Override
-    public List<AcademicEvent> getEventsByBranch(Long branchId) {
-        return academicEventRepository.findByBranchId(branchId);
-    }
+    @Override
+    public AcademicEvent updateEvent(Long id, AcademicEvent event) {
+        AcademicEvent existingEvent = academicEventRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Event not found"));
+        
+        if (event.getStartDate().isAfter(event.getEndDate())) {
+            throw new ValidationException("startDate cannot be after endDate");
+        }
+        
+        existingEvent.setTitle(event.getTitle());
+        existingEvent.setEventType(event.getEventType());
+        existingEvent.setStartDate(event.getStartDate());
+        existingEvent.setEndDate(event.getEndDate());
+        existingEvent.setLocation(event.getLocation());
+        existingEvent.setDescription(event.getDescription());
+        
+        return academicEventRepository.save(existingEvent);
+    }
 
-    @Override
-    public AcademicEvent updateEvent(Long id, AcademicEvent event) {
-        AcademicEvent existingEvent = academicEventRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Event not found"));
-        
-        if (event.getStartDate().isAfter(event.getEndDate())) {
-            throw new ValidationException("startDate cannot be after endDate");
-        }
-        
-        existingEvent.setTitle(event.getTitle());
-        existingEvent.setEventType(event.getEventType());
-        existingEvent.setStartDate(event.getStartDate());
-        existingEvent.setEndDate(event.getEndDate());
-        existingEvent.setLocation(event.getLocation());
-        existingEvent.setDescription(event.getDescription());
-        
-        return academicEventRepository.save(existingEvent);
-    }
+    @Override
+    public AcademicEvent getEventById(Long id) {
+        return academicEventRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Event not found"));
+    }
 
-    @Override
-    public AcademicEvent getEventById(Long id) {
-        return academicEventRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Event not found"));
-    }
+    @Override
+    public List<AcademicEvent> getAllEvents() {
+        return academicEventRepository.findAll();
+    }
 
-    @Override
-    public List<AcademicEvent> getAllEvents() {
-        return academicEventRepository.findAll();
-    }
+    @Override
+    public void deleteEvent(Long id) {
+        AcademicEvent event = academicEventRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Event not found"));
+        academicEventRepository.delete(event);
+    }
 }
 
 
-
-.....
-
-
-
-
 BranchProfileServiceImpl.java
+
+
 
 package com.example.demo.service.impl;
 
@@ -1304,47 +1482,53 @@ import com.example.demo.exception.ResourceNotFoundException;
 import com.example.demo.repository.BranchProfileRepository;
 import com.example.demo.service.BranchProfileService;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 
 @Service
 public class BranchProfileServiceImpl implements BranchProfileService {
+    private final BranchProfileRepository branchProfileRepository;
 
-    private final BranchProfileRepository branchProfileRepository;
+    public BranchProfileServiceImpl(BranchProfileRepository branchProfileRepository) {
+        this.branchProfileRepository = branchProfileRepository;
+    }
 
-    public BranchProfileServiceImpl(BranchProfileRepository branchProfileRepository) {
-        this.branchProfileRepository = branchProfileRepository;
-    }
+    @Override
+    public BranchProfile createBranch(BranchProfile branch) {
+        return branchProfileRepository.save(branch);
+    }
 
-    @Override
-    public BranchProfile createBranch(BranchProfile branch) {
-        return branchProfileRepository.save(branch);
-    }
+    @Override
+    public BranchProfile updateBranchStatus(Long id, boolean active) {
+        BranchProfile branch = branchProfileRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
+        branch.setActive(active);
+        return branchProfileRepository.save(branch);
+    }
 
-    @Override
-    public BranchProfile updateBranchStatus(Long id, boolean active) {
-        BranchProfile branch = branchProfileRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
-        branch.setActive(active);
-        return branchProfileRepository.save(branch);
-    }
+    @Override
+    public List<BranchProfile> getAllBranches() {
+        return branchProfileRepository.findAll();
+    }
 
-    @Override
-    public List<BranchProfile> getAllBranches() {
-        return branchProfileRepository.findAll();
-    }
+    @Override
+    public BranchProfile getBranchById(Long id) {
+        return branchProfileRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
+    }
 
-    @Override
-    public BranchProfile getBranchById(Long id) {
-        return branchProfileRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
-    }
+    @Override
+    public BranchProfile findByBranchCode(String branchCode) {
+        return branchProfileRepository.findByBranchCode(branchCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
+    }
 
-    @Override
-    public BranchProfile findByBranchCode(String branchCode) {
-        return branchProfileRepository.findByBranchCode(branchCode)
-                .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
-    }
+    @Override
+    public BranchProfile getBranchByCode(String branchCode) {
+        return findByBranchCode(branchCode);
+    }
 }
+
 
 
 ClashDetectionServiceImpl.java
@@ -1357,48 +1541,50 @@ import com.example.demo.exception.ResourceNotFoundException;
 import com.example.demo.repository.ClashRecordRepository;
 import com.example.demo.service.ClashDetectionService;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 
 @Service
 public class ClashDetectionServiceImpl implements ClashDetectionService {
+    private final ClashRecordRepository clashRecordRepository;
 
-    private final ClashRecordRepository clashRecordRepository;
+    public ClashDetectionServiceImpl(ClashRecordRepository clashRecordRepository) {
+        this.clashRecordRepository = clashRecordRepository;
+    }
 
-    public ClashDetectionServiceImpl(ClashRecordRepository clashRecordRepository) {
-        this.clashRecordRepository = clashRecordRepository;
-    }
+    @Override
+    public ClashRecord logClash(ClashRecord clash) {
+        return clashRecordRepository.save(clash);
+    }
 
-    @Override
-    public ClashRecord logClash(ClashRecord clash) {
-        return clashRecordRepository.save(clash);
-    }
+    @Override
+    public List<ClashRecord> getClashesForEvent(Long eventId) {
+        return clashRecordRepository.findByEventAIdOrEventBId(eventId, eventId);
+    }
 
-    @Override
-    public List<ClashRecord> getClashesForEvent(Long eventId) {
-        return clashRecordRepository.findByEventAIdOrEventBId(eventId, eventId);
-    }
+    @Override
+    public ClashRecord resolveClash(Long clashId) {
+        ClashRecord clash = clashRecordRepository.findById(clashId)
+                .orElseThrow(() -> new ResourceNotFoundException("Clash not found"));
+        clash.setResolved(true);
+        return clashRecordRepository.save(clash);
+    }
 
-    @Override
-    public ClashRecord resolveClash(Long clashId) {
-        ClashRecord clash = clashRecordRepository.findById(clashId)
-                .orElseThrow(() -> new ResourceNotFoundException("Clash not found"));
-        clash.setResolved(true);
-        return clashRecordRepository.save(clash);
-    }
+    @Override
+    public List<ClashRecord> getUnresolvedClashes() {
+        return clashRecordRepository.findByResolvedFalse();
+    }
 
-    @Override
-    public List<ClashRecord> getUnresolvedClashes() {
-        return clashRecordRepository.findByResolvedFalse();
-    }
-
-    @Override
-    public List<ClashRecord> getAllClashes() {
-        return clashRecordRepository.findAll();
-    }
+    @Override
+    public List<ClashRecord> getAllClashes() {
+        return clashRecordRepository.findAll();
+    }
 }
 
 
 EventMergeServiceImpl.java
+
+
 
 package com.example.demo.service.impl;
 
@@ -1409,62 +1595,64 @@ import com.example.demo.repository.AcademicEventRepository;
 import com.example.demo.repository.EventMergeRecordRepository;
 import com.example.demo.service.EventMergeService;
 import org.springframework.stereotype.Service;
+
 import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
 public class EventMergeServiceImpl implements EventMergeService {
+    private final EventMergeRecordRepository eventMergeRecordRepository;
+    private final AcademicEventRepository academicEventRepository;
 
-    private final EventMergeRecordRepository eventMergeRecordRepository;
-    private final AcademicEventRepository academicEventRepository;
+    public EventMergeServiceImpl(EventMergeRecordRepository eventMergeRecordRepository, AcademicEventRepository academicEventRepository) {
+        this.eventMergeRecordRepository = eventMergeRecordRepository;
+        this.academicEventRepository = academicEventRepository;
+    }
 
-    public EventMergeServiceImpl(EventMergeRecordRepository eventMergeRecordRepository, AcademicEventRepository academicEventRepository) {
-        this.eventMergeRecordRepository = eventMergeRecordRepository;
-        this.academicEventRepository = academicEventRepository;
-    }
+    @Override
+    public EventMergeRecord mergeEvents(List<Long> eventIds, String reason) {
+        List<AcademicEvent> events = academicEventRepository.findAllById(eventIds);
+        if (events.isEmpty()) {
+            throw new ResourceNotFoundException("No events found for merging");
+        }
 
-    @Override
-    public EventMergeRecord mergeEvents(List<Long> eventIds, String reason) {
-        List<AcademicEvent> events = academicEventRepository.findAllById(eventIds);
-        if (events.size() != eventIds.size()) {
-            throw new ResourceNotFoundException("One or more events not found");
-        }
+        EventMergeRecord mergeRecord = new EventMergeRecord();
+        mergeRecord.setSourceEventIds(eventIds.stream().map(String::valueOf).collect(Collectors.joining(",")));
+        mergeRecord.setMergedTitle("Merged: " + events.get(0).getTitle());
+        mergeRecord.setMergedStartDate(events.stream().map(AcademicEvent::getStartDate).min(LocalDate::compareTo).orElse(LocalDate.now()));
+        mergeRecord.setMergedEndDate(events.stream().map(AcademicEvent::getEndDate).max(LocalDate::compareTo).orElse(LocalDate.now()));
+        mergeRecord.setMergeReason(reason);
 
-        String sourceEventIds = eventIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-        String mergedTitle = events.stream().map(AcademicEvent::getTitle).collect(Collectors.joining(" + "));
-        LocalDate mergedStartDate = events.stream().map(AcademicEvent::getStartDate).min(LocalDate::compareTo).orElse(LocalDate.now());
-        LocalDate mergedEndDate = events.stream().map(AcademicEvent::getEndDate).max(LocalDate::compareTo).orElse(LocalDate.now());
+        return eventMergeRecordRepository.save(mergeRecord);
+    }
 
-        EventMergeRecord mergeRecord = new EventMergeRecord();
-        mergeRecord.setSourceEventIds(sourceEventIds);
-        mergeRecord.setMergedTitle(mergedTitle);
-        mergeRecord.setMergedStartDate(mergedStartDate);
-        mergeRecord.setMergedEndDate(mergedEndDate);
-        mergeRecord.setMergeReason(reason);
+    @Override
+    public List<EventMergeRecord> getAllMergeRecords() {
+        return eventMergeRecordRepository.findAll();
+    }
 
-        return eventMergeRecordRepository.save(mergeRecord);
-    }
+    @Override
+    public EventMergeRecord getMergeRecordById(Long id) {
+        return eventMergeRecordRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Merge record not found"));
+    }
 
-    @Override
-    public List<EventMergeRecord> getAllMergeRecords() {
-        return eventMergeRecordRepository.findAll();
-    }
+    @Override
+    public List<EventMergeRecord> getMergeRecordsByDate(LocalDate start, LocalDate end) {
+        return eventMergeRecordRepository.findByMergedStartDateBetween(start, end);
+    }
 
-    @Override
-    public EventMergeRecord getMergeRecordById(Long id) {
-        return eventMergeRecordRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Merge record not found"));
-    }
-
-    @Override
-    public List<EventMergeRecord> getMergeRecordsByDate(LocalDate start, LocalDate end) {
-        return eventMergeRecordRepository.findByMergedStartDateBetween(start, end);
-    }
+    @Override
+    public EventMergeRecord getMergeRecord(Long id) {
+        return getMergeRecordById(id);
+    }
 }
 
 
+
 HarmonizedCalendarServiceImpl.java
+
 
 package com.example.demo.service.impl;
 
@@ -1473,48 +1661,59 @@ import com.example.demo.exception.ResourceNotFoundException;
 import com.example.demo.repository.HarmonizedCalendarRepository;
 import com.example.demo.service.HarmonizedCalendarService;
 import org.springframework.stereotype.Service;
+
 import java.time.LocalDate;
 import java.util.List;
 
 @Service
 public class HarmonizedCalendarServiceImpl implements HarmonizedCalendarService {
+    private final HarmonizedCalendarRepository harmonizedCalendarRepository;
 
-    private final HarmonizedCalendarRepository harmonizedCalendarRepository;
+    public HarmonizedCalendarServiceImpl(HarmonizedCalendarRepository harmonizedCalendarRepository) {
+        this.harmonizedCalendarRepository = harmonizedCalendarRepository;
+    }
 
-    public HarmonizedCalendarServiceImpl(HarmonizedCalendarRepository harmonizedCalendarRepository) {
-        this.harmonizedCalendarRepository = harmonizedCalendarRepository;
-    }
+    @Override
+    public HarmonizedCalendar generateHarmonizedCalendar(String title, String generatedBy) {
+        HarmonizedCalendar calendar = new HarmonizedCalendar();
+        calendar.setTitle(title);
+        calendar.setGeneratedBy(generatedBy);
+        calendar.setEffectiveFrom(LocalDate.now());
+        calendar.setEffectiveTo(LocalDate.now().plusDays(30));
+        calendar.setEventsJson("[]");
+        return harmonizedCalendarRepository.save(calendar);
+    }
 
-    @Override
-    public HarmonizedCalendar generateHarmonizedCalendar(String title, String generatedBy) {
-        HarmonizedCalendar calendar = new HarmonizedCalendar();
-        calendar.setTitle(title);
-        calendar.setGeneratedBy(generatedBy);
-        calendar.setEffectiveFrom(LocalDate.now());
-        calendar.setEffectiveTo(LocalDate.now().plusYears(1));
-        calendar.setEventsJson("[]");
-        return harmonizedCalendarRepository.save(calendar);
-    }
+    @Override
+    public HarmonizedCalendar getCalendarById(Long id) {
+        return harmonizedCalendarRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Calendar not found"));
+    }
 
-    @Override
-    public HarmonizedCalendar getCalendarById(Long id) {
-        return harmonizedCalendarRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Calendar not found"));
-    }
+    @Override
+    public List<HarmonizedCalendar> getAllCalendars() {
+        return harmonizedCalendarRepository.findAll();
+    }
 
-    @Override
-    public List<HarmonizedCalendar> getAllCalendars() {
-        return harmonizedCalendarRepository.findAll();
-    }
+    @Override
+    public List<HarmonizedCalendar> getCalendarsWithinRange(LocalDate start, LocalDate end) {
+        return harmonizedCalendarRepository.findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(start, end);
+    }
 
-    @Override
-    public List<HarmonizedCalendar> getCalendarsWithinRange(LocalDate start, LocalDate end) {
-        return harmonizedCalendarRepository.findByEffectiveFromLessThanEqualAndEffectiveToGreaterThanEqual(start, end);
-    }
+    @Override
+    public HarmonizedCalendar getHarmonizedCalendar(Long id) {
+        return getCalendarById(id);
+    }
+
+    @Override
+    public List<HarmonizedCalendar> getAllHarmonizedCalendars() {
+        return getAllCalendars();
+    }
 }
 
 
 UserAccountServiceImpl.java
+
 
 
 package com.example.demo.service.impl;
@@ -1526,52 +1725,63 @@ import com.example.demo.repository.UserAccountRepository;
 import com.example.demo.service.UserAccountService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 
 @Service
 public class UserAccountServiceImpl implements UserAccountService {
+    private final UserAccountRepository userAccountRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    private final UserAccountRepository userAccountRepository;
-    private final PasswordEncoder passwordEncoder;
+    public UserAccountServiceImpl(UserAccountRepository userAccountRepository, PasswordEncoder passwordEncoder) {
+        this.userAccountRepository = userAccountRepository;
+        this.passwordEncoder = passwordEncoder;
+    }
 
-    public UserAccountServiceImpl(UserAccountRepository userAccountRepository, PasswordEncoder passwordEncoder) {
-        this.userAccountRepository = userAccountRepository;
-        this.passwordEncoder = passwordEncoder;
-    }
+    @Override
+    public UserAccount register(UserAccount user) {
+        if (userAccountRepository.existsByEmail(user.getEmail())) {
+            throw new ValidationException("Email already in use");
+        }
+        
+        if (user.getPassword().length() < 8) {
+            throw new ValidationException("Password must be at least 8 characters");
+        }
 
-    @Override
-    public UserAccount register(UserAccount user) {
-        if (userAccountRepository.existsByEmail(user.getEmail())) {
-            throw new ValidationException("Email already in use");
-        }
-        if (user.getRole() == null) {
-            user.setRole("REVIEWER");
-        }
-        user.setPassword(passwordEncoder.encode(user.getPassword()));
-        return userAccountRepository.save(user);
-    }
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        if (user.getRole() == null) {
+            user.setRole("REVIEWER");
+        }
+        
+        return userAccountRepository.save(user);
+    }
 
-    @Override
-    public UserAccount findByEmail(String email) {
-        return userAccountRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-    }
+    @Override
+    public UserAccount findByEmail(String email) {
+        return userAccountRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    }
 
-    @Override
-    public UserAccount getUser(Long id) {
-        return userAccountRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-    }
+    @Override
+    public UserAccount getUser(Long id) {
+        return userAccountRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+    }
 
-    @Override
-    public List<UserAccount> getAllUsers() {
-        return userAccountRepository.findAll();
-    }
+    @Override
+    public List<UserAccount> getAllUsers() {
+        return userAccountRepository.findAll();
+    }
 }
 
-Service
+
+
+service(6)
+
 
 AcademicEventService.java
+
+
 
 package com.example.demo.service;
 
@@ -1579,14 +1789,19 @@ import com.example.demo.entity.AcademicEvent;
 import java.util.List;
 
 public interface AcademicEventService {
-    AcademicEvent createEvent(AcademicEvent event);
-    List<AcademicEvent> getEventsByBranch(Long branchId);
-    AcademicEvent updateEvent(Long id, AcademicEvent event);
-    AcademicEvent getEventById(Long id);
-    List<AcademicEvent> getAllEvents();
+    AcademicEvent createEvent(AcademicEvent event);
+    List<AcademicEvent> getEventsByBranch(Long branchId);
+    AcademicEvent updateEvent(Long id, AcademicEvent event);
+    AcademicEvent getEventById(Long id);
+    List<AcademicEvent> getAllEvents();
+    void deleteEvent(Long id);
 }
 
+
+
+
 BranchProfileService.java
+
 
 package com.example.demo.service;
 
@@ -1594,15 +1809,20 @@ import com.example.demo.entity.BranchProfile;
 import java.util.List;
 
 public interface BranchProfileService {
-    BranchProfile createBranch(BranchProfile branch);
-    BranchProfile updateBranchStatus(Long id, boolean active);
-    List<BranchProfile> getAllBranches();
-    BranchProfile getBranchById(Long id);
-    BranchProfile findByBranchCode(String branchCode);
+    BranchProfile createBranch(BranchProfile branch);
+    BranchProfile updateBranchStatus(Long id, boolean active);
+    List<BranchProfile> getAllBranches();
+    BranchProfile getBranchById(Long id);
+    BranchProfile findByBranchCode(String branchCode);
+    BranchProfile getBranchByCode(String branchCode);
 }
 
 
+
 ClashDetectionService.java
+
+
+
 
 package com.example.demo.service;
 
@@ -1610,19 +1830,17 @@ import com.example.demo.entity.ClashRecord;
 import java.util.List;
 
 public interface ClashDetectionService {
-    ClashRecord logClash(ClashRecord clash);
-    List<ClashRecord> getClashesForEvent(Long eventId);
-    ClashRecord resolveClash(Long clashId);
-    List<ClashRecord> getUnresolvedClashes();
-    List<ClashRecord> getAllClashes();
+    ClashRecord logClash(ClashRecord clash);
+    List<ClashRecord> getClashesForEvent(Long eventId);
+    ClashRecord resolveClash(Long clashId);
+    List<ClashRecord> getUnresolvedClashes();
+    List<ClashRecord> getAllClashes();
 }
 
 
 
 
-
 EventMergeService.java
-
 
 package com.example.demo.service;
 
@@ -1631,13 +1849,17 @@ import java.time.LocalDate;
 import java.util.List;
 
 public interface EventMergeService {
-    EventMergeRecord mergeEvents(List<Long> eventIds, String reason);
-    List<EventMergeRecord> getAllMergeRecords();
-    EventMergeRecord getMergeRecordById(Long id);
-    List<EventMergeRecord> getMergeRecordsByDate(LocalDate start, LocalDate end);
+    EventMergeRecord mergeEvents(List<Long> eventIds, String reason);
+    List<EventMergeRecord> getAllMergeRecords();
+    EventMergeRecord getMergeRecordById(Long id);
+    List<EventMergeRecord> getMergeRecordsByDate(LocalDate start, LocalDate end);
+    EventMergeRecord getMergeRecord(Long id);
 }
 
+
 HarmonizedCalendarService.java
+
+
 
 package com.example.demo.service;
 
@@ -1646,118 +1868,228 @@ import java.time.LocalDate;
 import java.util.List;
 
 public interface HarmonizedCalendarService {
-    HarmonizedCalendar generateHarmonizedCalendar(String title, String generatedBy);
-    HarmonizedCalendar getCalendarById(Long id);
-    List<HarmonizedCalendar> getAllCalendars();
-    List<HarmonizedCalendar> getCalendarsWithinRange(LocalDate start, LocalDate end);
+    HarmonizedCalendar generateHarmonizedCalendar(String title, String generatedBy);
+    HarmonizedCalendar getCalendarById(Long id);
+    List<HarmonizedCalendar> getAllCalendars();
+    List<HarmonizedCalendar> getCalendarsWithinRange(LocalDate start, LocalDate end);
+    HarmonizedCalendar getHarmonizedCalendar(Long id);
+    List<HarmonizedCalendar> getAllHarmonizedCalendars();
 }
+
 
 
 UserAccountService.java
 
+
 package com.example.demo.service;
 
 import com.example.demo.entity.UserAccount;
 import java.util.List;
 
 public interface UserAccountService {
-    UserAccount register(UserAccount user);
-    UserAccount findByEmail(String email);
-    UserAccount getUser(Long id);
-    List<UserAccount> getAllUsers();
+    UserAccount register(UserAccount user);
+    UserAccount findByEmail(String email);
+    UserAccount getUser(Long id);
+    List<UserAccount> getAllUsers();
 }
 
-servlets
+servlet(1)
 
 SimpleStatusServlet.java
 
-package com.example.demo.service;
 
-import com.example.demo.entity.UserAccount;
-import java.util.List;
+package com.example.demo.servlet;
 
-public interface UserAccountService {
-    UserAccount register(UserAccount user);
-    UserAccount findByEmail(String email);
-    UserAccount getUser(Long id);
-    List<UserAccount> getAllUsers();
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+@WebServlet(urlPatterns = "/simple-status")
+public class SimpleStatusServlet extends HttpServlet {
+    @Override
+    public void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.setStatus(200);
+        response.getWriter().write("Servlet Alive");
+    }
+}
+
+
+demo 
+
+DemoApplication.java
+
+package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.web.servlet.ServletComponentScan;
+
+@SpringBootApplication
+@ServletComponentScan
+public class DemoApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
+    }
 }
 
 
 
 application.properties
 
-spring.application.name=Multi-Branch Academic Calendar Harmonizer
-server.port=8084
-spring.datasource.url=jdbc:mysql://localhost:3306/academic_calendar?createDatabaseIfNotExist=true
-spring.datasource.username=root
-spring.datasource.password=root
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=false
-spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
-jwt.secret=mySecretKeyForJWTTokenGenerationAndValidation12345
-jwt.expiration=86400000
+
+# Database Configuration
+spring.datasource.url=jdbc:h2:mem:testdb
+spring.datasource.driverClassName=org.h2.Driver
+spring.datasource.username=sa
+spring.datasource.password=password
+spring.h2.console.enabled=true
+
+# JPA Configuration
+spring.jpa.database-platform=org.hibernate.dialect.H2Dialect
+spring.jpa.hibernate.ddl-auto=create-drop
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+
+# Server Configuration
+server.port=8080
+
+# Swagger Configuration
 springdoc.api-docs.path=/v3/api-docs
 springdoc.swagger-ui.path=/swagger-ui.html
+springdoc.swagger-ui.operationsSorter=method
+
+# Logging Configuration
+logging.level.com.example.demo=DEBUG
+logging.level.org.springframework.security=DEBUG
 
 
 
 
 
 
+pom.xml
 
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>3.2.0</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>com.example</groupId>
+	<artifactId>finalCalender</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<name>finalCalender</name>
+	<description>Demo project for Spring Boot</description>
+	<url/>
+	<licenses>
+		<license/>
+	</licenses>
+	<developers>
+		<developer/>
+	</developers>
+	<scm>
+		<connection/>
+		<developerConnection/>
+		<tag/>
+		<url/>
+	</scm>
+	<properties>
+		<java.version>21</java.version>
+	</properties>
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.mysql</groupId>
+			<artifactId>mysql-connector-j</artifactId>
+			<version>8.0.33</version>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-api</artifactId>
+			<version>0.11.5</version>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-impl</artifactId>
+			<version>0.11.5</version>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-jackson</artifactId>
+			<version>0.11.5</version>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>2.2.0</version>
+		</dependency>
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testng</groupId>
+			<artifactId>testng</artifactId>
+			<version>7.8.0</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.mockito</groupId>
+			<artifactId>mockito-core</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
 
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<mainClass>com.example.demo.DemoApplication</mainClass>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>3.1.2</version>
+				<configuration>
+					<includes>
+						<include>**/*Test.java</include>
+						<include>**/*Tests.java</include>
+					</includes>
+					<suiteXmlFiles>
+						<suiteXmlFile>src/test/resources/testng.xml</suiteXmlFile>
+					</suiteXmlFiles>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+</project>
 
