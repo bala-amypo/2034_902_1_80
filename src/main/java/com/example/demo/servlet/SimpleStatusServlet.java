@@ -1,4 +1,3 @@
-
 package com.example.demo.servlet;
 
 import jakarta.servlet.annotation.WebServlet;
@@ -9,10 +8,11 @@ import java.io.IOException;
 
 @WebServlet(urlPatterns = "/simple-status")
 public class SimpleStatusServlet extends HttpServlet {
+    
     @Override
-    public void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
         response.setStatus(200);
+        response.setContentType("text/plain");
         response.getWriter().write("Servlet Alive");
     }
 }
-

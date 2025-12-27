@@ -1,4 +1,3 @@
-
 package com.example.demo.service;
 
 import com.example.demo.entity.AcademicEvent;
@@ -10,7 +9,4 @@ public interface AcademicEventService {
     AcademicEvent updateEvent(Long id, AcademicEvent event);
     AcademicEvent getEventById(Long id);
     List<AcademicEvent> getAllEvents();
-    void deleteEvent(Long id);
 }
-
-

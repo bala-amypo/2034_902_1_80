@@ -1,4 +1,3 @@
-
 package com.example.demo.service;
 
 import com.example.demo.entity.BranchProfile;
@@ -10,6 +9,4 @@ public interface BranchProfileService {
     List<BranchProfile> getAllBranches();
     BranchProfile getBranchById(Long id);
     BranchProfile findByBranchCode(String branchCode);
-    BranchProfile getBranchByCode(String branchCode);
 }
-
