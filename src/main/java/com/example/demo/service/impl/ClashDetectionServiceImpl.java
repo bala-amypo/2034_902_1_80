@@ -10,21 +10,21 @@ import java.util.List;
 @Service
 public class ClashDetectionServiceImpl implements ClashDetectionService {
     private final ClashRecordRepository clashRecordRepository;
-    
+
     public ClashDetectionServiceImpl(ClashRecordRepository clashRecordRepository) {
         this.clashRecordRepository = clashRecordRepository;
     }
-    
-    @Override
-    public ClashRecord logClash(ClashRecord clash) {
-        return clashRecordRepository.save(clash);
-    }
-    
+
     @Override
     public List<ClashRecord> getClashesForEvent(Long eventId) {
         return clashRecordRepository.findByEventAIdOrEventBId(eventId, eventId);
     }
-    
+
+    @Override
+    public List<ClashRecord> getUnresolvedClashes() {
+        return clashRecordRepository.findByResolvedFalse();
+    }
+
     @Override
     public ClashRecord resolveClash(Long clashId) {
         ClashRecord clash = clashRecordRepository.findById(clashId)
@@ -32,14 +32,9 @@ public class ClashDetectionServiceImpl implements ClashDetectionService {
         clash.setResolved(true);
         return clashRecordRepository.save(clash);
     }
-    
+
     @Override
-    public List<ClashRecord> getUnresolvedClashes() {
-        return clashRecordRepository.findByResolvedFalse();
-    }
-    
-    @Override
-    public List<ClashRecord> getAllClashes() {
-        return clashRecordRepository.findAll();
+    public ClashRecord createClash(ClashRecord clash) {
+        return clashRecordRepository.save(clash);
     }
 }
