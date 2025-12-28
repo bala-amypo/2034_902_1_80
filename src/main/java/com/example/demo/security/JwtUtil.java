@@ -24,7 +24,7 @@ public class JwtUtil {
         initKey();
     }
 
-    // Required for Spring
+    // Required by Spring
     public JwtUtil() {
         this(86400000L);
     }
@@ -80,19 +80,29 @@ public class JwtUtil {
         return parseToken(token).getPayload();
     }
 
-    // 🔁 REQUIRED by JwtAuthenticationFilter
+    // 🔹 REQUIRED by portal tests
+    public String extractUsername(String token) {
+        return validateToken(token).getSubject();
+    }
+
+    // 🔹 REQUIRED by portal tests
+    public Long extractUserId(String token) {
+        return validateToken(token).get("userId", Long.class);
+    }
+
+    // 🔹 REQUIRED by JwtAuthenticationFilter
     public String extractEmail(String token) {
         return validateToken(token).get("email", String.class);
     }
 
-    // 🔁 REQUIRED by JwtAuthenticationFilter
+    // 🔹 REQUIRED by JwtAuthenticationFilter
     public String extractRole(String token) {
         return validateToken(token).get("role", String.class);
     }
 
     public boolean isTokenValid(String token, String username) {
         try {
-            return validateToken(token).getSubject().equals(username)
+            return extractUsername(token).equals(username)
                     && validateToken(token).getExpiration().after(new Date());
         } catch (Exception e) {
             return false;
