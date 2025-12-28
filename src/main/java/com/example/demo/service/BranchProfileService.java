@@ -5,8 +5,7 @@ import java.util.List;
 
 public interface BranchProfileService {
     BranchProfile createBranch(BranchProfile branch);
-    BranchProfile updateBranchStatus(Long id, boolean active);
+    BranchProfile updateBranchStatus(Long id, Boolean active);
     List<BranchProfile> getAllBranches();
     BranchProfile getBranchById(Long id);
-    BranchProfile findByBranchCode(String branchCode);
 }
