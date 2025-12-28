@@ -1,0 +1,37 @@
+package com.example.demo.controller;
+
+import com.example.demo.entity.AcademicEvent;
+import com.example.demo.service.AcademicEventService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/events")
+public class AcademicEventController {
+    private final AcademicEventService academicEventService;
+
+    public AcademicEventController(AcademicEventService academicEventService) {
+        this.academicEventService = academicEventService;
+    }
+
+    @GetMapping
+    public ResponseEntity<List<AcademicEvent>> getAllEvents() {
+        return ResponseEntity.ok(academicEventService.getAllEvents());
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<AcademicEvent> getEventById(@PathVariable Long id) {
+        return ResponseEntity.ok(academicEventService.getEventById(id));
+    }
+
+    @PostMapping
+    public ResponseEntity<AcademicEvent> createEvent(@RequestBody AcademicEvent event) {
+        return ResponseEntity.ok(academicEventService.createEvent(event));
+    }
+
+    @GetMapping("/branch/{branchId}")
+    public ResponseEntity<List<AcademicEvent>> getEventsByBranch(@PathVariable Long branchId) {
+        return ResponseEntity.ok(academicEventService.getEventsByBranch(branchId));
+    }
+}
