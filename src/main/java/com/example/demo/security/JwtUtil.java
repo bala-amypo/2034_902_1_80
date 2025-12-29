@@ -1,69 +1,63 @@
 package com.example.demo.security;
 
-import com.example.demo.entity.UserAccount;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
 import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.Map;
+
+import com.example.demo.entity.UserAccount;
 
 @Component
 public class JwtUtil {
-    private SecretKey key;
-    private final long expiration = 86400000; // 24 hours
 
-    public void initKey() {
-        this.key = Keys.secretKeyFor(SignatureAlgorithm.HS256);
-    }
+    private final SecretKey secretKey;
+    private final long expirationMillis;
 
-    public String generateToken(Map<String, Object> claims, String subject) {
-        if (key == null) initKey();
-        return Jwts.builder()
-                .setClaims(claims)
-                .setSubject(subject)
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expiration))
-                .signWith(key)
-                .compact();
+    public JwtUtil(
+            @Value("${jwt.secret:defaultSecretKeydefaultSecretKey}") String secret,
+            @Value("${jwt.expiration:86400000}") long expirationMillis
+    ) {
+        this.expirationMillis = expirationMillis;
+        this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     public String generateTokenForUser(UserAccount user) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("userId", user.getId());
-        claims.put("email", user.getEmail());
-        claims.put("role", user.getRole());
-        return generateToken(claims, user.getEmail());
-    }
-
-    public String extractUsername(String token) {
-        return parseToken(token).getBody().getSubject();
-    }
-
-    public String extractRole(String token) {
-        return (String) parseToken(token).getBody().get("role");
-    }
-
-    public Long extractUserId(String token) {
-        Object userId = parseToken(token).getBody().get("userId");
-        return userId instanceof Integer ? ((Integer) userId).longValue() : (Long) userId;
-    }
-
-    public boolean isTokenValid(String token, String username) {
-        try {
-            return extractUsername(token).equals(username) && !isTokenExpired(token);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private boolean isTokenExpired(String token) {
-        return parseToken(token).getBody().getExpiration().before(new Date());
+        return Jwts.builder()
+                .subject(user.getEmail())
+                .claim("userId", user.getId())
+                .claim("email", user.getEmail())
+                .claim("role", user.getRole())
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + expirationMillis))
+                .signWith(secretKey)
+                .compact();
     }
 
     public Jws<Claims> parseToken(String token) {
-        if (key == null) initKey();
-        return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
+        return Jwts.parser()
+                .verifyWith(secretKey)
+                .build()
+                .parseSignedClaims(token);
+    }
+
+    public String extractEmail(String token) {
+        return parseToken(token).getPayload().get("email", String.class);
+    }
+
+    public String extractUsername(String token) {
+        return parseToken(token).getPayload().getSubject();
+    }
+
+    public Long extractUserId(String token) {
+        return parseToken(token).getPayload().get("userId", Long.class);
+    }
+
+    public String extractRole(String token) {
+        return parseToken(token).getPayload().get("role", String.class);
     }
 }
