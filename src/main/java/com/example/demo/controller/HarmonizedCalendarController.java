@@ -1,53 +1,55 @@
 package com.example.demo.controller;
 
+import com.example.demo.dto.ApiResponse;
 import com.example.demo.entity.HarmonizedCalendar;
-import com.example.demo.service.HarmonizedCalendarService;
+import com.example.demo.service.impl.HarmonizedCalendarServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/harmonized-calendars")
-@Tag(name = "Harmonized Calendars")
+@Tag(name = "Harmonized Calendars", description = "Manage final calendars")
 public class HarmonizedCalendarController {
-    
-    private final HarmonizedCalendarService harmonizedCalendarService;
-    
-    public HarmonizedCalendarController(HarmonizedCalendarService harmonizedCalendarService) {
+
+    private final HarmonizedCalendarServiceImpl harmonizedCalendarService;
+
+    public HarmonizedCalendarController(HarmonizedCalendarServiceImpl harmonizedCalendarService) {
         this.harmonizedCalendarService = harmonizedCalendarService;
     }
-    
-    @PostMapping("/generate")
-    @Operation(summary = "Generate harmonized calendar")
-    public ResponseEntity<HarmonizedCalendar> generateCalendar(@RequestBody Map<String, String> request) {
-        String title = request.get("title");
-        String generatedBy = request.get("generatedBy");
-        return ResponseEntity.ok(harmonizedCalendarService.generateHarmonizedCalendar(title, generatedBy));
+
+   
+    public static class GenerateRequestDto {
+        public String title;
+        public String generatedBy;
     }
-    
+
+    @PostMapping("/generate")
+    @Operation(summary = "Generate a new harmonized calendar")
+    public ResponseEntity<ApiResponse> generateCalendar(@RequestBody GenerateRequestDto request) {
+        HarmonizedCalendar calendar = harmonizedCalendarService.generateHarmonizedCalendar(request.title, request.generatedBy);
+        return new ResponseEntity<>(new ApiResponse(true, "Calendar generated", calendar), HttpStatus.CREATED);
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get calendar by ID")
-    public ResponseEntity<HarmonizedCalendar> getCalendar(@PathVariable Long id) {
-        return ResponseEntity.ok(harmonizedCalendarService.getCalendarById(id));
+    public ResponseEntity<ApiResponse> getCalendarById(@PathVariable Long id) {
+        return ResponseEntity.ok(new ApiResponse(true, "Calendar fetched", harmonizedCalendarService.getCalendarById(id)));
     }
-    
+
     @GetMapping
     @Operation(summary = "Get all calendars")
-    public ResponseEntity<List<HarmonizedCalendar>> getAllCalendars() {
-        return ResponseEntity.ok(harmonizedCalendarService.getAllCalendars());
+    public ResponseEntity<ApiResponse> getAllCalendars() {
+        return ResponseEntity.ok(new ApiResponse(true, "All calendars fetched", harmonizedCalendarService.getAllCalendars()));
     }
-    
+
     @GetMapping("/range")
-    @Operation(summary = "Get calendars within date range")
-    public ResponseEntity<List<HarmonizedCalendar>> getCalendarsWithinRange(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
-        return ResponseEntity.ok(harmonizedCalendarService.getCalendarsWithinRange(start, end));
+    @Operation(summary = "Get calendars within effective range")
+    public ResponseEntity<ApiResponse> getCalendarsWithinRange(@RequestParam LocalDate start, @RequestParam LocalDate end) {
+        return ResponseEntity.ok(new ApiResponse(true, "Calendars fetched", harmonizedCalendarService.getCalendarsWithinRange(start, end)));
     }
 }
